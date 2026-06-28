@@ -1,0 +1,42 @@
+{
+  "name": "hero-code",
+  "displayName": "Hero Code",
+  "description": "A VS Code extension.",
+  "version": "0.0.1",
+  "publisher": "tult",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "hero-code.helloWorld",
+        "title": "Hello World",
+        "category": "Hero Code"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "vscode:prepublish": "npm run package",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.x",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.x",
+    "typescript": "^5.x",
+    "typescript-eslint": "^8.x"
+  }
+}
