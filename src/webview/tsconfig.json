@@ -1,25 +1,24 @@
 {
 	"compilerOptions": {
-		"module": "Node16",
+		"module": "ESNext",
 		"target": "ES2022",
 		"lib": [
-			"ES2022"
+			"ES2022",
+			"DOM",
+			"DOM.Iterable"
 		],
-		"moduleResolution": "Node16",
-		"rootDir": "src",
+		"moduleResolution": "Bundler",
+		"jsx": "react-jsx",
 		"strict": true,
-		"sourceMap": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,
 		"noEmit": true,
 		"types": [
-			"node"
+			"react",
+			"react-dom"
 		]
 	},
 	"include": [
-		"src"
-	],
-	"exclude": [
-		"src/webview"
+		"."
 	]
 }

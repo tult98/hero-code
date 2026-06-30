@@ -1,9 +1,34 @@
 const esbuild = require('esbuild');
 const fs = require('fs');
 const path = require('path');
+const { spawn, spawnSync } = require('child_process');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+
+/**
+ * Tailwind v4 has no official esbuild plugin, so we drive its CLI directly:
+ * `src/webview/index.css` (which maps VS Code theme vars into utility tokens)
+ * is compiled to `dist/webview.css`, loaded by the panel shell via <link>.
+ */
+const tailwindBin = path.join(__dirname, 'node_modules', '.bin', 'tailwindcss');
+const tailwindArgs = ['-i', 'src/webview/index.css', '-o', 'dist/webview.css'];
+const spawnOpts = { stdio: 'inherit', shell: process.platform === 'win32' };
+
+function buildTailwind() {
+	fs.mkdirSync(path.join(__dirname, 'dist'), { recursive: true });
+	const args = production ? [...tailwindArgs, '--minify'] : tailwindArgs;
+	const result = spawnSync(tailwindBin, args, spawnOpts);
+	if (result.status !== 0) {
+		throw new Error('tailwindcss build failed');
+	}
+}
+
+function watchTailwind() {
+	fs.mkdirSync(path.join(__dirname, 'dist'), { recursive: true });
+	const child = spawn(tailwindBin, [...tailwindArgs, '--watch'], spawnOpts);
+	child.on('error', (err) => console.error('tailwindcss:', err));
+}
 
 /**
  * Copy the codicon font + stylesheet into `dist/` so the webview can load them
@@ -41,7 +66,8 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
-	const ctx = await esbuild.context({
+	// Extension host: Node/CJS, `vscode` provided by the runtime.
+	const hostCtx = await esbuild.context({
 		entryPoints: ['src/extension.ts'],
 		bundle: true,
 		format: 'cjs',
@@ -54,11 +80,33 @@ async function main() {
 		logLevel: 'silent',
 		plugins: [esbuildProblemMatcherPlugin],
 	});
+
+	// Webview: browser/IIFE React bundle loaded by the panel shell. React is
+	// bundled in (no externals); JSX uses the automatic runtime.
+	const webviewCtx = await esbuild.context({
+		entryPoints: ['src/webview/main.tsx'],
+		bundle: true,
+		format: 'iife',
+		jsx: 'automatic',
+		minify: production,
+		sourcemap: !production,
+		sourcesContent: false,
+		platform: 'browser',
+		outfile: 'dist/webview.js',
+		// React/react-dom read `process.env.NODE_ENV`, which doesn't exist in a
+		// webview. Substitute it so the bundle loads and picks the right React build.
+		define: { 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
+		logLevel: 'silent',
+	});
+
+	const contexts = [hostCtx, webviewCtx];
 	if (watch) {
-		await ctx.watch();
+		await Promise.all(contexts.map((c) => c.watch()));
+		watchTailwind();
 	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
+		await Promise.all(contexts.map((c) => c.rebuild()));
+		await Promise.all(contexts.map((c) => c.dispose()));
+		buildTailwind();
 	}
 }
 

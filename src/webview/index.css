@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+/* Scan the webview sources for utility classes (class strings live in both
+   .tsx components and the .ts status map). */
+@source "./*.ts";
+@source "./*.tsx";
+
+/*
+ * Bridge VS Code's theme variables into Tailwind color tokens so utilities like
+ * `text-vs-fg` / `bg-vs-sidebar` track the user's active theme (dark, light,
+ * high-contrast) instead of a hardcoded palette. Fallbacks mirror the originals.
+ */
+@theme {
+  --color-vs-fg: var(--vscode-foreground);
+  --color-vs-sidebar: var(--vscode-sideBar-background);
+  --color-vs-desc: var(--vscode-descriptionForeground);
+  --color-vs-header: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-descriptionForeground));
+  --color-vs-blue: var(--vscode-charts-blue, #3794ff);
+  --color-vs-yellow: var(--vscode-charts-yellow, #e2b53d);
+  --color-vs-red: var(--vscode-charts-red, #f14c4c);
+
+  /* `animate-scpulse` — the gentle pulse on a waiting session's indicator. */
+  --animate-scpulse: scpulse 1.4s ease-in-out infinite;
+}
+
+@keyframes scpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background-color: var(--vscode-sideBar-background);
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+  }
+  /* Hide the native disclosure triangle; the group renders its own chevron. */
+  summary {
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+}
