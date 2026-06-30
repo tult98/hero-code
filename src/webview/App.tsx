@@ -12,6 +12,7 @@ export function App() {
   const persisted = vscode.getState()
   const [groups, setGroups] = useState<SessionGroup[]>(persisted?.groups ?? [])
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set(persisted?.collapsed ?? []))
+  const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null)
   // Reference time for relative timestamps; refreshed each time data arrives.
   const [now, setNow] = useState(() => Date.now())
 
@@ -30,8 +31,10 @@ export function App() {
 
   // Persist data + collapse state so a webview reload restores instantly.
   useEffect(() => {
-    vscode.setState({ groups, collapsed: [...collapsed] })
-  }, [groups, collapsed])
+    vscode.setState({ groups, collapsed: [...collapsed], selectedId })
+  }, [groups, collapsed, selectedId])
+
+  const handleSelect = (id: string) => setSelectedId(id)
 
   const handleToggle = (name: string, open: boolean) => {
     setCollapsed((prev) => {
@@ -63,6 +66,8 @@ export function App() {
               now={now}
               open={!collapsed.has(group.name)}
               onToggle={handleToggle}
+              selectedId={selectedId}
+              onSelect={handleSelect}
             />
           ))
         ) : (

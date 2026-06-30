@@ -6,11 +6,15 @@ export function Group({
   now,
   open,
   onToggle,
+  selectedId,
+  onSelect,
 }: {
   group: SessionGroup
   now: number
   open: boolean
   onToggle: (name: string, open: boolean) => void
+  selectedId: string | null
+  onSelect: (id: string) => void
 }) {
   return (
     <details className='mb-1' open={open} onToggle={(e) => onToggle(group.name, e.currentTarget.open)}>
@@ -18,7 +22,7 @@ export function Group({
         <span
           className={`codicon codicon-triangle-down text-sm text-vs-desc transition-transform ${open ? '' : '-rotate-90'}`}
         />
-        <span className='flex-1 min-w-0 truncate font-bold tracking-wide' title={group.name}>
+        <span className='flex-1 min-w-0 truncate text-xs font-bold tracking-wide' title={group.name}>
           {group.name}
         </span>
         <span className='flex items-center gap-3'>
@@ -28,7 +32,13 @@ export function Group({
       {group.sessions.length ? (
         <ul className='list-none m-0 p-0'>
           {group.sessions.map((item) => (
-            <Row key={item.id} item={item} now={now} />
+            <Row
+              key={item.id}
+              item={item}
+              now={now}
+              selected={item.id === selectedId}
+              onSelect={onSelect}
+            />
           ))}
         </ul>
       ) : (

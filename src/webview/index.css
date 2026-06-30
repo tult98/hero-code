@@ -18,6 +18,9 @@
   --color-vs-blue: var(--vscode-charts-blue, #3794ff);
   --color-vs-yellow: var(--vscode-charts-yellow, #e2b53d);
   --color-vs-red: var(--vscode-charts-red, #f14c4c);
+  --color-vs-sel-bg: var(--vscode-list-activeSelectionBackground);
+  --color-vs-sel-fg: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+  --color-vs-hover-bg: var(--vscode-list-hoverBackground);
 
   /* `animate-scpulse` — the gentle pulse on a waiting session's indicator. */
   --animate-scpulse: scpulse 1.4s ease-in-out infinite;

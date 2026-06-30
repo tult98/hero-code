@@ -5,6 +5,8 @@ export interface PersistedState {
   groups: SessionGroup[]
   /** Names of groups the user has collapsed. */
   collapsed: string[]
+  /** Id of the currently selected session row, if any. */
+  selectedId?: string | null
 }
 
 interface VsCodeApi {
