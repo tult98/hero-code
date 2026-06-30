@@ -14,13 +14,24 @@
   "main": "./dist/extension.js",
   "activationEvents": [],
   "contributes": {
-    "commands": [
-      {
-        "command": "hero-code.helloWorld",
-        "title": "Hello World",
-        "category": "Hero Code"
-      }
-    ]
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hero-code-sessions",
+          "title": "Claude Sessions",
+          "icon": "media/claude.svg"
+        }
+      ]
+    },
+    "views": {
+      "hero-code-sessions": [
+        {
+          "id": "hero-code.sessions",
+          "name": "Sessions",
+          "type": "webview"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "node esbuild.js",
@@ -33,6 +44,7 @@
   "devDependencies": {
     "@types/node": "^20.x",
     "@types/vscode": "^1.90.0",
+    "@vscode/codicons": "^0.0.45",
     "@vscode/vsce": "^3.x",
     "esbuild": "^0.24.0",
     "eslint": "^9.x",

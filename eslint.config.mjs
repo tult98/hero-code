@@ -14,7 +14,7 @@ export default tseslint.config(
 			],
 			curly: 'warn',
 			eqeqeq: 'warn',
-			semi: 'warn',
+			semi: ['warn', 'never'],
 		},
 	},
 );
