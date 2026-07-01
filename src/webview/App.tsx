@@ -17,6 +17,9 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null)
   // Reference time for relative timestamps; refreshed each time data arrives.
   const [now, setNow] = useState(() => Date.now())
+  // Live filter query. Transient by design — not persisted to vscode state, so a
+  // reopened/reloaded panel never restores a stale filter.
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<StateMessage>) => {
@@ -70,6 +73,23 @@ export function App() {
     })
   }
 
+  // Filter sessions by name + activity. When active, drop empty groups; groups
+  // are force-opened below and Group renders matches flat (no collapse limit).
+  const q = search.trim().toLowerCase()
+  const searching = q.length > 0
+  const filteredGroups = searching
+    ? groups
+        .map((group) => ({
+          ...group,
+          sessions: group.sessions.filter(
+            (s) =>
+              (s.customName ?? s.title).toLowerCase().includes(q) ||
+              (s.activity ?? '').toLowerCase().includes(q),
+          ),
+        }))
+        .filter((group) => group.sessions.length > 0)
+    : groups
+
   return (
     <div className='flex flex-col h-full min-h-0'>
       <div className='h-9 shrink-0 flex items-center justify-between pl-5 pr-2.5 text-xs tracking-wide text-vs-header'>
@@ -84,14 +104,32 @@ export function App() {
           <span className='codicon codicon-ellipsis text-sm text-vs-desc' title='More' />
         </span>
       </div>
+      <div className='shrink-0 px-2.5 pt-1 pb-1.5'>
+        <div className='relative'>
+          <span className='codicon codicon-search absolute left-2 top-1/2 -translate-y-1/2 text-xs text-vs-desc pointer-events-none' />
+          <input
+            className='w-full text-xs rounded pl-7 pr-2 py-1 outline-none bg-(--vscode-input-background) text-(--vscode-input-foreground) border border-(--vscode-input-border,transparent) focus:border-(--vscode-focusBorder) placeholder:text-vs-desc'
+            placeholder='Search sessions...'
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setSearch('')
+              }
+            }}
+          />
+        </div>
+      </div>
       <div className='flex-1 min-h-0 overflow-y-auto pt-1 px-1.5 pb-2'>
-        {groups.length ? (
-          groups.map((group) => (
+        {filteredGroups.length ? (
+          filteredGroups.map((group) => (
             <Group
               key={group.name}
               group={group}
               now={now}
-              open={!collapsed.has(group.name)}
+              open={searching ? true : !collapsed.has(group.name)}
+              searching={searching}
               onToggle={handleToggle}
               onNewSession={handleNewSession}
               selectedId={selectedId}
@@ -101,6 +139,8 @@ export function App() {
               onMarkDone={handleMarkDone}
             />
           ))
+        ) : searching ? (
+          <div className='px-3 py-3 text-vs-desc'>No matching sessions.</div>
         ) : (
           <div className='px-3 py-3 text-vs-desc'>No workspace open.</div>
         )}

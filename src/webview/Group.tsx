@@ -8,6 +8,7 @@ export function Group({
   group,
   now,
   open,
+  searching,
   onToggle,
   onNewSession,
   selectedId,
@@ -19,6 +20,8 @@ export function Group({
   group: SessionGroup
   now: number
   open: boolean
+  /** A search query is active: show every (already-filtered) session flat. */
+  searching: boolean
   onToggle: (name: string, open: boolean) => void
   onNewSession: (path: string) => void
   selectedId: string | null
@@ -72,27 +75,33 @@ export function Group({
         </span>
       </summary>
       {group.sessions.length ? (
-        <ul className='list-none m-0 p-0'>
-          {visible.map(renderRow)}
-          {hidden > 0 && (
-            <li
-              className='text-center text-xs text-vs-desc cursor-pointer rounded-md py-1.5 select-none hover:bg-vs-hover-bg'
-              onClick={() => setShowAll((v) => !v)}
-            >
-              {showAll ? 'Show less' : `+${hidden} more`}
-            </li>
-          )}
-          {doneItems.length > 0 && (
-            <li
-              className='flex items-center justify-center gap-1.5 text-xs text-vs-desc cursor-pointer rounded-md py-1.5 select-none hover:bg-vs-hover-bg'
-              onClick={() => setShowDone((v) => !v)}
-            >
-              <span className='codicon codicon-check-all text-xs' />
-              {showDone ? 'Hide done' : `${doneItems.length} done`}
-            </li>
-          )}
-          {showDone && doneItems.map(renderRow)}
-        </ul>
+        // While searching, `group.sessions` is already the match set — show it
+        // flat, bypassing the collapse limit and the done-hiding toggle.
+        searching ? (
+          <ul className='list-none m-0 p-0'>{group.sessions.map(renderRow)}</ul>
+        ) : (
+          <ul className='list-none m-0 p-0'>
+            {visible.map(renderRow)}
+            {hidden > 0 && (
+              <li
+                className='text-center text-xs text-vs-desc cursor-pointer rounded-md py-1.5 select-none hover:bg-vs-hover-bg'
+                onClick={() => setShowAll((v) => !v)}
+              >
+                {showAll ? 'Show less' : `+${hidden} more`}
+              </li>
+            )}
+            {doneItems.length > 0 && (
+              <li
+                className='flex items-center justify-center gap-1.5 text-xs text-vs-desc cursor-pointer rounded-md py-1.5 select-none hover:bg-vs-hover-bg'
+                onClick={() => setShowDone((v) => !v)}
+              >
+                <span className='codicon codicon-check-all text-xs' />
+                {showDone ? 'Hide done' : `${doneItems.length} done`}
+              </li>
+            )}
+            {showDone && doneItems.map(renderRow)}
+          </ul>
+        )
       ) : (
         <div className='pt-0.5 pb-2 pl-6 text-xs text-vs-desc'>No sessions yet.</div>
       )}
