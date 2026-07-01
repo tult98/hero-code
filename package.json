@@ -14,6 +14,20 @@
   "main": "./dist/extension.js",
   "activationEvents": [],
   "contributes": {
+    "commands": [
+      {
+        "command": "hero-code.mentionInSession",
+        "title": "Hero Code: Send Selection to Claude Session"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "hero-code.mentionInSession",
+        "key": "ctrl+alt+k",
+        "mac": "alt+cmd+k",
+        "when": "editorTextFocus"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {

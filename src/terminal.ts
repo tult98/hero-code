@@ -168,3 +168,18 @@ export function openNewSessionTerminal(cwd: string, sessionId: string): void {
 export function hasSessionTerminal(sessionId: string): boolean {
   return terminals.has(sessionId)
 }
+
+/**
+ * Insert `text` into the tracked terminal for `sessionId` without submitting it
+ * (no trailing newline), then reveal and focus the terminal so the user can keep
+ * typing their prompt. Returns false if no live terminal is tracked for the id.
+ */
+export function mentionInSessionTerminal(sessionId: string, text: string): boolean {
+  const terminal = terminals.get(sessionId)
+  if (!terminal) {
+    return false
+  }
+  terminal.sendText(text, false)
+  terminal.show()
+  return true
+}

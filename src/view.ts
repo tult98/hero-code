@@ -21,6 +21,18 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   private pending = new Map<string, string>()
   /** Session id to select on the next posted state, consumed once. */
   private selectOnce?: string
+  /**
+   * Id of the session currently selected in the sidebar, mirrored from the
+   * webview's `open`/`newSession` messages so host-side commands (e.g. the
+   * "mention in session" keybinding) know which terminal to target. Resets on
+   * window reload, which is why that command warns when it is undefined.
+   */
+  private selected?: string
+
+  /** Id of the session currently selected in the sidebar, if any. */
+  get selectedSessionId(): string | undefined {
+    return this.selected
+  }
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -86,12 +98,14 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         if (msg.type === 'ready' || msg.type === 'refresh') {
           this.postState()
         } else if (msg.type === 'open' && msg.id) {
+          this.selected = msg.id
           openSessionTerminal(msg.id, msg.title)
         } else if (msg.type === 'newSession' && msg.path) {
           const id = randomUUID()
           openNewSessionTerminal(msg.path, id)
           this.pending.set(id, msg.path)
           this.selectOnce = id
+          this.selected = id
           this.postState()
         } else if (msg.type === 'pin' && msg.id) {
           this.setMeta(msg.id, { pinned: msg.pinned })
