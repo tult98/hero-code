@@ -34,7 +34,13 @@ export function App() {
     vscode.setState({ groups, collapsed: [...collapsed], selectedId })
   }, [groups, collapsed, selectedId])
 
-  const handleSelect = (id: string) => setSelectedId(id)
+  const handleSelect = (id: string) => {
+    setSelectedId(id)
+    const title = groups.flatMap((g) => g.sessions).find((s) => s.id === id)?.title
+    vscode.postMessage({ type: 'open', id, title })
+  }
+
+  const handleRefresh = () => vscode.postMessage({ type: 'refresh' })
 
   const handleToggle = (name: string, open: boolean) => {
     setCollapsed((prev) => {
@@ -53,7 +59,12 @@ export function App() {
       <div className='h-9 shrink-0 flex items-center justify-between pl-5 pr-2.5 text-xs tracking-wide text-vs-header'>
         <span>SESSIONS</span>
         <span className='flex items-center gap-3'>
-          <span className='codicon codicon-refresh text-sm text-vs-desc' title='Refresh' />
+          <span
+            className='codicon codicon-refresh text-sm text-vs-desc cursor-pointer rounded p-0.5 hover:text-vs-fg hover:bg-vs-hover-bg'
+            title='Refresh'
+            role='button'
+            onClick={handleRefresh}
+          />
           <span className='codicon codicon-ellipsis text-sm text-vs-desc' title='More' />
         </span>
       </div>

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode'
 import { getSessionGroups } from './sessions.js'
+import { openSessionTerminal } from './terminal.js'
 
 export class SessionsViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hero-code.sessions'
@@ -25,9 +26,11 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     // The bundle loads asynchronously, so a state message posted now could arrive
     // before the webview attaches its listener. The app posts `ready` once mounted
     // (and again after any reload), and we reply with the current state.
-    view.webview.onDidReceiveMessage((msg: { type?: string }) => {
-      if (msg.type === 'ready') {
+    view.webview.onDidReceiveMessage((msg: { type?: string; id?: string; title?: string }) => {
+      if (msg.type === 'ready' || msg.type === 'refresh') {
         this.postState()
+      } else if (msg.type === 'open' && msg.id) {
+        openSessionTerminal(msg.id, msg.title)
       }
     })
 
