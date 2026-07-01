@@ -2,7 +2,7 @@ import * as vscode from 'vscode'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import type { ParsedSession, RawEntry, SessionGroup, SessionItem, Status } from './types.js'
+import type { ParsedSession, RawEntry, SessionGroup, SessionItem, SessionMeta, Status } from './types.js'
 import { encodeProjectPath, parseSession } from './transcript.js'
 
 /**
@@ -59,7 +59,11 @@ function deriveStatus(running: boolean, parsed: ParsedSession): Status {
 const cache = new Map<string, { mtime: number; data: ParsedSession | null }>()
 
 /** Scan one workspace folder's transcript directory, most recent first. */
-function scanFolder(folderPath: string, running: Set<string>): SessionItem[] {
+function scanFolder(
+  folderPath: string,
+  running: Set<string>,
+  meta: Record<string, SessionMeta>,
+): SessionItem[] {
   const dir = path.join(os.homedir(), '.claude', 'projects', encodeProjectPath(folderPath))
 
   let files: string[]
@@ -92,22 +96,31 @@ function scanFolder(folderPath: string, running: Set<string>): SessionItem[] {
     }
     const id = file.replace(/\.jsonl$/, '')
     const isRunning = running.has(id)
+    const m = meta[id]
     items.push({
       id,
       mtime,
       running: isRunning,
       status: deriveStatus(isRunning, cached.data),
       ...cached.data,
+      customName: m?.name,
+      pinned: m?.pinned,
+      done: m?.done,
     })
   }
 
-  // Running sessions first, then most-recently active.
-  items.sort((a, b) => Number(b.running) - Number(a.running) || b.mtime - a.mtime)
+  // Pinned first, then running, then most-recently active.
+  items.sort(
+    (a, b) =>
+      Number(!!b.pinned) - Number(!!a.pinned) ||
+      Number(b.running) - Number(a.running) ||
+      b.mtime - a.mtime,
+  )
   return items
 }
 
 /** One group per open workspace folder, in workspace order. */
-export function getSessionGroups(): SessionGroup[] {
+export function getSessionGroups(meta: Record<string, SessionMeta>): SessionGroup[] {
   const folders = vscode.workspace.workspaceFolders ?? []
   if (folders.length === 0) {
     return []
@@ -118,6 +131,6 @@ export function getSessionGroups(): SessionGroup[] {
 
   return folders.map((folder) => ({
     name: folder.name,
-    sessions: scanFolder(folder.uri.fsPath, running),
+    sessions: scanFolder(folder.uri.fsPath, running, meta),
   }))
 }

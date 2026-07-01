@@ -11,6 +11,9 @@ export function Group({
   onToggle,
   selectedId,
   onSelect,
+  onPin,
+  onRename,
+  onMarkDone,
 }: {
   group: SessionGroup
   now: number
@@ -18,10 +21,32 @@ export function Group({
   onToggle: (name: string, open: boolean) => void
   selectedId: string | null
   onSelect: (id: string) => void
+  onPin: (id: string, pinned: boolean) => void
+  onRename: (id: string, name: string) => void
+  onMarkDone: (id: string, done: boolean) => void
 }) {
   const [showAll, setShowAll] = useState(false)
-  const hidden = group.sessions.length - COLLAPSED_LIMIT
-  const visible = showAll ? group.sessions : group.sessions.slice(0, COLLAPSED_LIMIT)
+  const [showDone, setShowDone] = useState(false)
+
+  // Done sessions are hidden from the active list and revealed on demand.
+  const active = group.sessions.filter((s) => !s.done)
+  const doneItems = group.sessions.filter((s) => s.done)
+  const hidden = active.length - COLLAPSED_LIMIT
+  const visible = showAll ? active : active.slice(0, COLLAPSED_LIMIT)
+
+  const renderRow = (item: SessionGroup['sessions'][number]) => (
+    <Row
+      key={item.id}
+      item={item}
+      now={now}
+      selected={item.id === selectedId}
+      onSelect={onSelect}
+      onPin={onPin}
+      onRename={onRename}
+      onMarkDone={onMarkDone}
+    />
+  )
+
   return (
     <details className='mb-1' open={open} onToggle={(e) => onToggle(group.name, e.currentTarget.open)}>
       <summary className='flex items-center gap-1.5 cursor-pointer py-1.5 pl-1.5 pr-2 text-vs-fg'>
@@ -37,15 +62,7 @@ export function Group({
       </summary>
       {group.sessions.length ? (
         <ul className='list-none m-0 p-0'>
-          {visible.map((item) => (
-            <Row
-              key={item.id}
-              item={item}
-              now={now}
-              selected={item.id === selectedId}
-              onSelect={onSelect}
-            />
-          ))}
+          {visible.map(renderRow)}
           {hidden > 0 && (
             <li
               className='text-center text-xs text-vs-desc cursor-pointer rounded-md py-1.5 select-none hover:bg-vs-hover-bg'
@@ -54,6 +71,16 @@ export function Group({
               {showAll ? 'Show less' : `+${hidden} more`}
             </li>
           )}
+          {doneItems.length > 0 && (
+            <li
+              className='flex items-center justify-center gap-1.5 text-xs text-vs-desc cursor-pointer rounded-md py-1.5 select-none hover:bg-vs-hover-bg'
+              onClick={() => setShowDone((v) => !v)}
+            >
+              <span className='codicon codicon-check-all text-xs' />
+              {showDone ? 'Hide done' : `${doneItems.length} done`}
+            </li>
+          )}
+          {showDone && doneItems.map(renderRow)}
         </ul>
       ) : (
         <div className='pt-0.5 pb-2 pl-6 text-xs text-vs-desc'>No sessions yet.</div>

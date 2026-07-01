@@ -5,7 +5,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       SessionsViewProvider.viewType,
-      new SessionsViewProvider(context.extensionUri),
+      new SessionsViewProvider(context.extensionUri, context.globalState),
     ),
   )
 }

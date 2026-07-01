@@ -14,6 +14,23 @@ export interface SessionItem extends ParsedSession {
   mtime: number
   status: Status
   running: boolean
+  /** User-set custom name; when present the row shows it instead of `title`. */
+  customName?: string
+  /** Kept at the top of its group. */
+  pinned?: boolean
+  /** Marked done; hidden from the active list, revealed under "Done". */
+  done?: boolean
+}
+
+/**
+ * Per-session user metadata, persisted in the extension host's `globalState`
+ * keyed by session id. This is the source of truth that survives auto-refresh,
+ * webview reload, and extension restart; it is merged into each `SessionItem`.
+ */
+export interface SessionMeta {
+  pinned?: boolean
+  name?: string
+  done?: boolean
 }
 
 /** Sessions for a single workspace folder, rendered as one group. */

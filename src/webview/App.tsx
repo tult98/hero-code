@@ -42,6 +42,12 @@ export function App() {
 
   const handleRefresh = () => vscode.postMessage({ type: 'refresh' })
 
+  // Pin / rename / done are persisted host-side; the host re-posts authoritative
+  // state, so these handlers only need to fire the message.
+  const handlePin = (id: string, pinned: boolean) => vscode.postMessage({ type: 'pin', id, pinned })
+  const handleRename = (id: string, name: string) => vscode.postMessage({ type: 'rename', id, name })
+  const handleMarkDone = (id: string, done: boolean) => vscode.postMessage({ type: 'done', id, done })
+
   const handleToggle = (name: string, open: boolean) => {
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -79,6 +85,9 @@ export function App() {
               onToggle={handleToggle}
               selectedId={selectedId}
               onSelect={handleSelect}
+              onPin={handlePin}
+              onRename={handleRename}
+              onMarkDone={handleMarkDone}
             />
           ))
         ) : (
