@@ -1,5 +1,8 @@
 .vscode/**
 .vscode-test/**
+.claude/**
+.serena/**
+media/claude.webp
 src/**
 node_modules/**
 .gitignore

@@ -1,10 +1,22 @@
 {
   "name": "hero-code",
   "displayName": "Hero Code",
-  "description": "A VS Code extension.",
-  "version": "0.0.1",
-  "publisher": "tult",
-  "private": true,
+  "description": "Send editor selections to a running Claude Code session and manage your Claude sessions from a VS Code sidebar.",
+  "version": "0.0.2",
+  "publisher": "tule",
+  "icon": "media/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tult98/hero-code.git"
+  },
+  "keywords": [
+    "claude",
+    "claude code",
+    "ai",
+    "terminal",
+    "assistant"
+  ],
   "engines": {
     "vscode": "^1.90.0"
   },
