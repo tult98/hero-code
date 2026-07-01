@@ -36,6 +36,8 @@ export interface SessionMeta {
 /** Sessions for a single workspace folder, rendered as one group. */
 export interface SessionGroup {
   name: string
+  /** Folder's filesystem path — cwd for a new session started from this group. */
+  path: string
   sessions: SessionItem[]
 }
 

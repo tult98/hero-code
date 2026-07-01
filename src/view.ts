@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import type { SessionMeta } from './types.js'
 import { getSessionGroups } from './sessions.js'
-import { openSessionTerminal } from './terminal.js'
+import { openNewSessionTerminal, openSessionTerminal } from './terminal.js'
 
 /** `globalState` key under which per-session user metadata is stored. */
 const META_KEY = 'hero-code.sessionMeta'
@@ -69,6 +69,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         id?: string
         title?: string
         name?: string
+        path?: string
         pinned?: boolean
         done?: boolean
       }) => {
@@ -76,6 +77,8 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
           this.postState()
         } else if (msg.type === 'open' && msg.id) {
           openSessionTerminal(msg.id, msg.title)
+        } else if (msg.type === 'newSession' && msg.path) {
+          openNewSessionTerminal(msg.path)
         } else if (msg.type === 'pin' && msg.id) {
           this.setMeta(msg.id, { pinned: msg.pinned })
         } else if (msg.type === 'rename' && msg.id) {

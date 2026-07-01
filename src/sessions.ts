@@ -131,6 +131,7 @@ export function getSessionGroups(meta: Record<string, SessionMeta>): SessionGrou
 
   return folders.map((folder) => ({
     name: folder.name,
+    path: folder.uri.fsPath,
     sessions: scanFolder(folder.uri.fsPath, running, meta),
   }))
 }

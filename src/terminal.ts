@@ -91,3 +91,24 @@ export function openSessionTerminal(sessionId: string, title?: string): void {
   terminal.sendText(`claude --resume ${sessionId}`, true)
   terminal.show()
 }
+
+/**
+ * Start a fresh Claude session in an integrated terminal rooted at `cwd` (a
+ * workspace folder). Unlike `openSessionTerminal`, these terminals aren't
+ * tracked or reused: each click opens a genuinely new session. The panel is
+ * docked to the right on first use, matching the resume flow.
+ */
+export function openNewSessionTerminal(cwd: string): void {
+  if (!panelDockedRight) {
+    panelDockedRight = true
+    void vscode.commands.executeCommand('workbench.action.positionPanelRight')
+  }
+
+  const terminal = vscode.window.createTerminal({
+    name: `Claude (${path.basename(cwd)})`,
+    cwd,
+    location: vscode.TerminalLocation.Panel,
+  })
+  terminal.sendText('claude', true)
+  terminal.show()
+}

@@ -42,6 +42,8 @@ export function App() {
 
   const handleRefresh = () => vscode.postMessage({ type: 'refresh' })
 
+  const handleNewSession = (path: string) => vscode.postMessage({ type: 'newSession', path })
+
   // Pin / rename / done are persisted host-side; the host re-posts authoritative
   // state, so these handlers only need to fire the message.
   const handlePin = (id: string, pinned: boolean) => vscode.postMessage({ type: 'pin', id, pinned })
@@ -83,6 +85,7 @@ export function App() {
               now={now}
               open={!collapsed.has(group.name)}
               onToggle={handleToggle}
+              onNewSession={handleNewSession}
               selectedId={selectedId}
               onSelect={handleSelect}
               onPin={handlePin}

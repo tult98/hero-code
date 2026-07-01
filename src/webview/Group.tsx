@@ -9,6 +9,7 @@ export function Group({
   now,
   open,
   onToggle,
+  onNewSession,
   selectedId,
   onSelect,
   onPin,
@@ -19,6 +20,7 @@ export function Group({
   now: number
   open: boolean
   onToggle: (name: string, open: boolean) => void
+  onNewSession: (path: string) => void
   selectedId: string | null
   onSelect: (id: string) => void
   onPin: (id: string, pinned: boolean) => void
@@ -57,7 +59,16 @@ export function Group({
           {group.name}
         </span>
         <span className='flex items-center gap-3'>
-          <span className='codicon codicon-add text-sm text-vs-desc' title='New session in workspace' />
+          <span
+            className='codicon codicon-add text-sm text-vs-desc cursor-pointer rounded p-0.5 hover:text-vs-fg hover:bg-vs-hover-bg'
+            title='New session in workspace'
+            role='button'
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onNewSession(group.path)
+            }}
+          />
         </span>
       </summary>
       {group.sessions.length ? (
