@@ -63,5 +63,7 @@ export interface RawEntry {
   error?: unknown
   sessionId?: string
   pid?: number
+  /** Live status Claude writes into `~/.claude/sessions/<pid>.json` (e.g. 'busy' | 'idle'). */
+  status?: string
   message?: { content?: unknown; stop_reason?: string }
 }
