@@ -89,6 +89,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       (msg: {
         type?: string
         id?: string
+        liveId?: string
         title?: string
         name?: string
         path?: string
@@ -99,7 +100,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
           this.postState()
         } else if (msg.type === 'open' && msg.id) {
           this.selected = msg.id
-          openSessionTerminal(msg.id, msg.title)
+          openSessionTerminal(msg.id, msg.title, msg.liveId)
         } else if (msg.type === 'newSession' && msg.path) {
           const id = randomUUID()
           openNewSessionTerminal(msg.path, id)

@@ -2,6 +2,18 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.4] - 2026-07-01
+
+### Fixed
+
+- Actively working sessions that had been `/cleared` no longer show as "Idle" with
+  a stuck "New session" placeholder. When a cleared session's launch transcript was
+  never written to disk, its live conversation is now surfaced on a single row that
+  reflects the real status (Working / Waiting for input).
+- Clicking such a row now opens its terminal instead of failing with "Could not
+  locate the workspace folder for this session" — resume and workspace lookup follow
+  the live session id while the row stays tracked under its stable id.
+
 ## [0.0.3] - 2026-07-01
 
 ### Fixed

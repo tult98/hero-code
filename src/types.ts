@@ -13,6 +13,12 @@ export interface SessionItem extends ParsedSession {
   mtime: number
   status: Status
   running: boolean
+  /**
+   * The session id the process currently runs under, when it differs from the
+   * display `id` after `/clear`. The row keeps the stable launch `id` for
+   * tracking/meta, but resume and workspace lookup must target this live id.
+   */
+  liveId?: string
   /** User-set custom name; when present the row shows it instead of `title`. */
   customName?: string
   /** Kept at the top of its group. */

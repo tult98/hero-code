@@ -107,7 +107,7 @@ function findSessionCwd(sessionId: string): string | undefined {
  * session's workspace folder. The panel is docked to the right on first use so it
  * reads like a right-hand sidebar.
  */
-export function openSessionTerminal(sessionId: string, title?: string): void {
+export function openSessionTerminal(sessionId: string, title?: string, resumeId?: string): void {
   ensureCloseListener()
 
   const existing = terminals.get(sessionId)
@@ -116,7 +116,11 @@ export function openSessionTerminal(sessionId: string, title?: string): void {
     return
   }
 
-  const cwd = findSessionCwd(sessionId)
+  // After `/clear` the row's stable `sessionId` (launch id) has no transcript of
+  // its own; the live conversation lives under `resumeId`. Resume and workspace
+  // lookup must target that, while the terminal stays tracked under the stable id.
+  const target = resumeId || sessionId
+  const cwd = findSessionCwd(target)
   if (!cwd) {
     void vscode.window.showWarningMessage(
       `Could not locate the workspace folder for this session, so it can't be resumed.`,
@@ -135,7 +139,7 @@ export function openSessionTerminal(sessionId: string, title?: string): void {
     location: vscode.TerminalLocation.Panel,
   })
   terminals.set(sessionId, terminal)
-  terminal.sendText(`claude --resume ${sessionId}`, true)
+  terminal.sendText(`claude --resume ${target}`, true)
   terminal.show()
 }
 

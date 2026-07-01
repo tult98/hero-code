@@ -2,7 +2,7 @@
   "name": "hero-code",
   "displayName": "Hero Code",
   "description": "Send editor selections to a running Claude Code session and manage your Claude sessions from a VS Code sidebar.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",

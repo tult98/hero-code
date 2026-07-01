@@ -154,18 +154,46 @@ function scanFolder(
     return []
   }
 
-  // Post-`/clear` live ids whose content we fold onto the launch row (below);
-  // their standalone transcript must not appear as a duplicate row. Only alias
-  // when the launch transcript actually exists here, so a live id we can't
-  // re-home keeps its own row.
+  // Reconcile `/clear`ed processes, whose live id diverges from the launch id
+  // the extension tracks them under. Live ids we handle here are aliased so their
+  // standalone transcript never renders as a duplicate row.
+  //
+  //  - Launch transcript present → fold live content onto the launch row in the
+  //    file loop below (its file is iterated; `deriveStatus`/re-home do the rest).
+  //  - Launch transcript missing (a session cleared before it ever persisted a
+  //    `<launchId>.jsonl`) → there's no file to iterate, so synthesize the row
+  //    here, keyed by the *launch* id. Keeping the stable launch id is what lets
+  //    the view's placeholder-supersede and per-session meta reconcile correctly.
   const aliasedLiveIds = new Set<string>()
+  const synthesized: SessionItem[] = []
   for (const [launchId, info] of live) {
-    if (info.liveId !== launchId && fs.existsSync(path.join(dir, `${launchId}.jsonl`))) {
-      aliasedLiveIds.add(info.liveId)
+    if (info.liveId === launchId) {
+      continue
     }
+    if (fs.existsSync(path.join(dir, `${launchId}.jsonl`))) {
+      aliasedLiveIds.add(info.liveId)
+      continue
+    }
+    const liveCached = parseCached(path.join(dir, `${info.liveId}.jsonl`))
+    if (!liveCached?.data) {
+      continue // Live transcript isn't in this folder — process belongs elsewhere.
+    }
+    aliasedLiveIds.add(info.liveId)
+    const m = meta[launchId]
+    synthesized.push({
+      id: launchId,
+      liveId: info.liveId,
+      mtime: liveCached.mtime,
+      running: true,
+      status: deriveStatus(info, liveCached.data),
+      ...liveCached.data,
+      customName: m?.name,
+      pinned: m?.pinned,
+      done: m?.done,
+    })
   }
 
-  const items: SessionItem[] = []
+  const items: SessionItem[] = [...synthesized]
   for (const file of files) {
     if (!file.endsWith('.jsonl')) {
       continue
@@ -198,6 +226,7 @@ function scanFolder(
     const m = meta[id]
     items.push({
       id,
+      liveId: info && info.liveId !== id ? info.liveId : undefined,
       mtime,
       running: !!info,
       status: deriveStatus(info, data),

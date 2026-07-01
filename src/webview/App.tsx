@@ -47,8 +47,8 @@ export function App() {
 
   const handleSelect = (id: string) => {
     setSelectedId(id)
-    const title = groups.flatMap((g) => g.sessions).find((s) => s.id === id)?.title
-    vscode.postMessage({ type: 'open', id, title })
+    const session = groups.flatMap((g) => g.sessions).find((s) => s.id === id)
+    vscode.postMessage({ type: 'open', id, title: session?.title, liveId: session?.liveId })
   }
 
   const handleRefresh = () => vscode.postMessage({ type: 'refresh' })
