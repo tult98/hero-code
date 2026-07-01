@@ -7,6 +7,14 @@ export const STATUS_LABEL: Record<Status, string> = {
   idle: 'Idle',
 }
 
+/** Verbose status wording for the row's meta line (the dot carries the color). */
+export const STATUS_TEXT: Record<Status, string> = {
+  working: 'Working…',
+  waiting: 'Waiting for input',
+  error: 'Error',
+  idle: 'Idle',
+}
+
 /**
  * Codicon name per status, rendered as `<span class="codicon codicon-<name>">`.
  * `working` additionally gets `codicon-modifier-spin` for the animated loader.

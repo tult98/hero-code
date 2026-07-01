@@ -41,7 +41,7 @@ function describeTool(name: string, input: ToolInput | undefined): string {
 
 /**
  * Parse a session `.jsonl` into the fields we can show. Everything here is
- * read straight from the transcript — title, branch, and last activity.
+ * read straight from the transcript — title and last activity.
  * Returns null for sessions with no usable title (empty sessions).
  */
 export function parseSession(filePath: string): ParsedSession | null {
@@ -56,7 +56,6 @@ export function parseSession(filePath: string): ParsedSession | null {
   let lastPrompt: string | undefined
   let firstUser: string | undefined
   let activity: string | undefined
-  let branch: string | undefined
   let stopReason: string | undefined
   let errored = false
 
@@ -70,11 +69,6 @@ export function parseSession(filePath: string): ParsedSession | null {
       entry = JSON.parse(trimmed) as RawEntry
     } catch {
       continue
-    }
-
-    // `gitBranch` is stamped on most entries; keep the latest non-empty value.
-    if (entry.gitBranch) {
-      branch = entry.gitBranch
     }
 
     switch (entry.type) {
@@ -133,7 +127,6 @@ export function parseSession(filePath: string): ParsedSession | null {
   return {
     title: clean(title).slice(0, 120),
     activity: activity ? clean(activity).slice(0, 120) : undefined,
-    branch,
     stopReason,
     errored,
   }

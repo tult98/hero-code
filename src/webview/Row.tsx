@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { SessionItem } from '../types.js'
 import { relativeTime } from '../format.js'
-import { STATUS_COLOR, STATUS_ICON, STATUS_LABEL } from './status.js'
+import { STATUS_COLOR, STATUS_ICON, STATUS_LABEL, STATUS_TEXT } from './status.js'
 
 export function Row({
   item,
@@ -107,10 +107,7 @@ export function Row({
               >
                 {displayName}
               </span>
-              <span className={`shrink-0 whitespace-nowrap text-xs ${subColor} group-hover:hidden`}>
-                {relativeTime(now - item.mtime)}
-              </span>
-              <div className='hidden group-hover:flex items-center gap-0.5 shrink-0'>
+              <div className='flex invisible group-hover:visible items-center gap-0.5 shrink-0'>
                 <span
                   className={actionBtn}
                   title={item.pinned ? 'Unpin' : 'Pin'}
@@ -164,12 +161,10 @@ export function Row({
             </>
           )}
         </div>
-        {item.branch && (
-          <div className={`flex items-center gap-1 mt-0.5 text-xs ${subColor}`}>
-            <span className='codicon codicon-git-branch shrink-0 text-xs' />
-            <span className='truncate'>{item.branch}</span>
-          </div>
-        )}
+        <div className={`mt-0.5 flex items-center gap-1.5 text-xs ${subColor}`}>
+          <span className='shrink-0 whitespace-nowrap'>{STATUS_TEXT[item.status]}</span>•
+          <span className='shrink-0 whitespace-nowrap'>{relativeTime(now - item.mtime)}</span>
+        </div>
         {item.activity && <div className={`mt-1.5 truncate text-xs ${subColor}`}>{item.activity}</div>}
       </div>
     </li>

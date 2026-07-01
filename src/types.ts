@@ -4,7 +4,6 @@ export type Status = 'working' | 'waiting' | 'error' | 'idle'
 export interface ParsedSession {
   title: string
   activity?: string
-  branch?: string
   stopReason?: string
   errored?: boolean
 }
@@ -62,7 +61,6 @@ export interface RawEntry {
   lastPrompt?: string
   isApiErrorMessage?: boolean
   error?: unknown
-  gitBranch?: string
   sessionId?: string
   pid?: number
   message?: { content?: unknown; stop_reason?: string }
