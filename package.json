@@ -1,8 +1,8 @@
 {
   "name": "hero-code",
   "displayName": "Hero Code",
-  "description": "Send editor selections to a running Claude Code session and manage your Claude sessions from a VS Code sidebar.",
-  "version": "0.0.4",
+  "description": "Manage multiple Claude Code sessions at once — realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
+  "version": "0.0.5",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",

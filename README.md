@@ -1,14 +1,30 @@
 # Hero Code
 
-Bring your Claude Code sessions into VS Code. Browse running sessions in a sidebar and
-jump straight from an editor selection into the session's terminal.
+A better way to run and manage multiple Claude Code sessions at once. Hero Code adds a
+**Claude Sessions** sidebar to VS Code that lists every session with its live status — so
+you can see at a glance which one is working, which is waiting on you, and which is idle,
+and jump straight to the one that needs you.
+
+![The Claude Sessions sidebar listing sessions grouped by workspace folder, each with a live status](media/screenshot.png)
+
+## Why Hero Code
+
+Running more than one Claude Code session gets messy fast: multiple terminals, no easy way
+to tell what each is doing, and constant tab-switching. Hero Code turns them into a single,
+always-current dashboard.
 
 ## Features
 
-- **Claude Sessions sidebar** — an activity bar view listing your Claude Code sessions,
-  showing status and letting you select which one is active.
-- **Hero Code: Send Selection to Claude Session** — inserts an `@file` mention for the
-  active editor into the selected session's terminal, without submitting it.
+- **All your sessions in one sidebar** — every Claude Code session across your open
+  workspace folders in one list, instead of hunting through terminal tabs.
+- **Realtime status** — each session shows whether it's **Working**, **Waiting for input**,
+  **Idle**, or **Error**, refreshed automatically so you always know where things stand.
+- **New session in one click** — press the **add new (+)** button to start a fresh session;
+  open or resume any existing session's terminal from its row.
+- **Keep your sessions organized** — **pin** the ones you care about to the top, **rename**
+  a session to something memorable, and **mark it done** when you're finished with it.
+- **Send a selection to the session you choose** — mention an editor selection directly in
+  the right session's terminal (not just whichever terminal happens to be focused).
   - With a selection: mentions the specific line range (`@path#L10-20`).
   - With no selection: mentions the whole file (`@path`).
   - Default keybinding: `ctrl+alt+k` (`alt+cmd+k` on macOS), while an editor has focus.
@@ -38,13 +54,13 @@ loaded.
 
 ### Scripts
 
-| Script                 | Description                                    |
-| ---------------------- | ----------------------------------------------- |
-| `npm run compile`      | Bundle the extension with esbuild.               |
-| `npm run watch`        | Rebuild on change (used by the F5 build task).   |
-| `npm run package`      | Production (minified) bundle.                    |
-| `npm run check-types`  | Type-check with `tsc --noEmit`.                  |
-| `npm run lint`         | Lint `src` with ESLint.                          |
+| Script                | Description                                    |
+| --------------------- | ---------------------------------------------- |
+| `npm run compile`     | Bundle the extension with esbuild.             |
+| `npm run watch`       | Rebuild on change (used by the F5 build task). |
+| `npm run package`     | Production (minified) bundle.                  |
+| `npm run check-types` | Type-check with `tsc --noEmit`.                |
+| `npm run lint`        | Lint `src` with ESLint.                        |
 
 ### Packaging
 

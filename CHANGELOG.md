@@ -2,6 +2,18 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.5] - 2026-07-02
+
+### Changed
+
+- Rewrote the README and Marketplace description to lead with what the extension is for:
+  managing multiple Claude Code sessions at once with realtime status, one-click new
+  sessions, and pin / rename / mark-done for keeping sessions organized.
+
+### Added
+
+- Added a Claude Sessions sidebar screenshot to the Marketplace listing.
+
 ## [0.0.4] - 2026-07-01
 
 ### Fixed
