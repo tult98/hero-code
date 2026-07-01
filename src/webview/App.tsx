@@ -6,6 +6,8 @@ import { Group } from './Group.js'
 interface StateMessage {
   type: 'state'
   groups: SessionGroup[]
+  /** When present, select this session id (used right after starting one). */
+  selectId?: string
 }
 
 export function App() {
@@ -21,6 +23,12 @@ export function App() {
       if (event.data?.type === 'state') {
         setGroups(event.data.groups)
         setNow(Date.now())
+        // Host-driven selection (e.g. right after starting a new session). Set
+        // it directly rather than via handleSelect — the host already opened
+        // the terminal, so no `open` message is needed.
+        if (event.data.selectId) {
+          setSelectedId(event.data.selectId)
+        }
       }
     }
     window.addEventListener('message', onMessage)

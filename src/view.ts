@@ -1,7 +1,8 @@
 import * as vscode from 'vscode'
-import type { SessionMeta } from './types.js'
+import { randomUUID } from 'crypto'
+import type { SessionItem, SessionMeta } from './types.js'
 import { getSessionGroups } from './sessions.js'
-import { openNewSessionTerminal, openSessionTerminal } from './terminal.js'
+import { hasSessionTerminal, openNewSessionTerminal, openSessionTerminal } from './terminal.js'
 
 /** `globalState` key under which per-session user metadata is stored. */
 const META_KEY = 'hero-code.sessionMeta'
@@ -11,6 +12,15 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView
   private timer?: ReturnType<typeof setInterval>
+  /**
+   * New sessions started from the "+" button, keyed by their pre-assigned
+   * session id → the folder path they belong to. Shown as optimistic rows until
+   * the real transcript appears (or the terminal is closed), so the panel
+   * reflects the session immediately instead of waiting for the first message.
+   */
+  private pending = new Map<string, string>()
+  /** Session id to select on the next posted state, consumed once. */
+  private selectOnce?: string
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -78,7 +88,11 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         } else if (msg.type === 'open' && msg.id) {
           openSessionTerminal(msg.id, msg.title)
         } else if (msg.type === 'newSession' && msg.path) {
-          openNewSessionTerminal(msg.path)
+          const id = randomUUID()
+          openNewSessionTerminal(msg.path, id)
+          this.pending.set(id, msg.path)
+          this.selectOnce = id
+          this.postState()
         } else if (msg.type === 'pin' && msg.id) {
           this.setMeta(msg.id, { pinned: msg.pinned })
         } else if (msg.type === 'rename' && msg.id) {
@@ -112,7 +126,38 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private postState(): void {
-    this.view?.webview.postMessage({ type: 'state', groups: getSessionGroups(this.getMeta()) })
+    const groups = getSessionGroups(this.getMeta())
+
+    // Merge optimistic rows for "+"-started sessions whose transcript hasn't
+    // been written yet, so they appear (and can be selected) immediately.
+    for (const [id, folderPath] of this.pending) {
+      if (!hasSessionTerminal(id)) {
+        // The terminal was closed before the first message — abandon the row.
+        this.pending.delete(id)
+        continue
+      }
+      const group = groups.find((g) => g.path === folderPath)
+      if (!group) {
+        continue
+      }
+      if (group.sessions.some((s) => s.id === id)) {
+        // The real transcript is now on disk; the scanned row supersedes ours.
+        this.pending.delete(id)
+        continue
+      }
+      const placeholder: SessionItem = {
+        id,
+        title: 'New session',
+        mtime: Date.now(),
+        running: true,
+        status: 'waiting',
+      }
+      group.sessions.unshift(placeholder)
+    }
+
+    const selectId = this.selectOnce
+    this.selectOnce = undefined
+    this.view?.webview.postMessage({ type: 'state', groups, ...(selectId ? { selectId } : {}) })
   }
 
   private shellHtml(webview: vscode.Webview): string {

@@ -7,6 +7,20 @@ import { encodeProjectPath } from './transcript.js'
 /** One terminal per session id, kept alive; clicking a row reveals its terminal. */
 const terminals = new Map<string, vscode.Terminal>()
 
+/**
+ * Matches the `[<sessionId>]` marker we append to every terminal name. VS Code
+ * restores terminals across a window reload but wipes our in-memory map, and the
+ * name is the only thing that survives — so we encode the session id there and
+ * parse it back on activation. Requiring a *bracketed full UUID* is what keeps us
+ * from adopting a user's own terminal that merely happens to be named "Claude …".
+ */
+const SID_RE = /\[([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\]/
+
+/** Terminal name = human-friendly label plus the parseable `[<sessionId>]` marker. */
+function formatName(label: string, sessionId: string): string {
+  return `${label} [${sessionId}]`
+}
+
 /** Dock the terminal panel to the right only once, on the first open. */
 let panelDockedRight = false
 
@@ -28,6 +42,39 @@ function ensureCloseListener(): void {
       }
     }
   })
+}
+
+/**
+ * Re-adopt terminals that VS Code restored after a window reload. Our tracking
+ * map is module state and is wiped on reload, but the terminal panels come back
+ * with their names intact; we parse the `[<sessionId>]` marker out of each name
+ * and repopulate the map so clicking a session reveals its restored terminal
+ * instead of spawning a duplicate. Idempotent — already-tracked ids are skipped —
+ * so it's safe to call more than once. Call this once, early, on activation.
+ */
+export function reconnectTerminals(): void {
+  ensureCloseListener()
+
+  let adopted = 0
+  for (const term of vscode.window.terminals) {
+    const match = SID_RE.exec(term.name)
+    if (!match) {
+      continue
+    }
+    const id = match[1].toLowerCase()
+    if (terminals.has(id)) {
+      // Don't clobber a terminal we're already tracking live.
+      continue
+    }
+    terminals.set(id, term)
+    adopted++
+  }
+
+  // The restored panel is already docked wherever the user left it, so skip the
+  // one-time reposition the next reveal would otherwise trigger.
+  if (adopted > 0) {
+    panelDockedRight = true
+  }
 }
 
 /**
@@ -83,7 +130,7 @@ export function openSessionTerminal(sessionId: string, title?: string): void {
   }
 
   const terminal = vscode.window.createTerminal({
-    name: title || `Claude ${sessionId.slice(0, 8)}`,
+    name: formatName(title || `Claude ${sessionId.slice(0, 8)}`, sessionId),
     cwd,
     location: vscode.TerminalLocation.Panel,
   })
@@ -94,21 +141,30 @@ export function openSessionTerminal(sessionId: string, title?: string): void {
 
 /**
  * Start a fresh Claude session in an integrated terminal rooted at `cwd` (a
- * workspace folder). Unlike `openSessionTerminal`, these terminals aren't
- * tracked or reused: each click opens a genuinely new session. The panel is
- * docked to the right on first use, matching the resume flow.
+ * workspace folder). The session id is fixed up front via `--session-id` so the
+ * terminal is tracked under that id (exactly like a resumed one): clicking the
+ * session's row later reveals this terminal instead of spawning a duplicate
+ * `--resume` terminal. The panel is docked to the right on first use.
  */
-export function openNewSessionTerminal(cwd: string): void {
+export function openNewSessionTerminal(cwd: string, sessionId: string): void {
+  ensureCloseListener()
+
   if (!panelDockedRight) {
     panelDockedRight = true
     void vscode.commands.executeCommand('workbench.action.positionPanelRight')
   }
 
   const terminal = vscode.window.createTerminal({
-    name: `Claude (${path.basename(cwd)})`,
+    name: formatName(`Claude (${path.basename(cwd)})`, sessionId),
     cwd,
     location: vscode.TerminalLocation.Panel,
   })
-  terminal.sendText('claude', true)
+  terminals.set(sessionId, terminal)
+  terminal.sendText(`claude --session-id ${sessionId}`, true)
   terminal.show()
+}
+
+/** Whether a live terminal is currently tracked for `sessionId`. */
+export function hasSessionTerminal(sessionId: string): boolean {
+  return terminals.has(sessionId)
 }
