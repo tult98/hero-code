@@ -2,6 +2,14 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.7] - 2026-07-02
+
+### Fixed
+
+- Bound the `Shift+Cmd+C` / `Ctrl+Shift+C` shortcut to the view-container command
+  (`workbench.view.extension.hero-code-sessions`) so the activity-bar icon tooltip
+  shows the shortcut, e.g. "Claude Sessions (⇧⌘C)".
+
 ## [0.0.6] - 2026-07-02
 
 ### Added
