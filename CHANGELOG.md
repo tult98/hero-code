@@ -2,6 +2,15 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.8] - 2026-07-02
+
+### Added
+
+- Each session row now shows the git branch it is working on (from the transcript's
+  per-entry `gitBranch` field) on its own line under the status. Useful in multi-repo
+  workspaces to see at a glance which branch each session is on. Sessions in
+  non-git directories show no branch.
+
 ## [0.0.7] - 2026-07-02
 
 ### Fixed

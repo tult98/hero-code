@@ -165,6 +165,12 @@ export function Row({
           <span className='shrink-0 whitespace-nowrap'>{STATUS_TEXT[item.status]}</span>•
           <span className='shrink-0 whitespace-nowrap'>{relativeTime(now - item.mtime)}</span>
         </div>
+        {item.gitBranch && (
+          <div className={`mt-0.5 flex items-center gap-1 text-xs ${subColor}`} title={item.gitBranch}>
+            <span className='codicon codicon-git-branch shrink-0 text-xs! leading-none' aria-hidden />
+            <span className='min-w-0 truncate'>{item.gitBranch}</span>
+          </div>
+        )}
         {item.activity && <div className={`mt-1.5 truncate text-xs ${subColor}`}>{item.activity}</div>}
       </div>
     </li>

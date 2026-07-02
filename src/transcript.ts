@@ -57,6 +57,7 @@ export function parseSession(filePath: string): ParsedSession | null {
   let firstUser: string | undefined
   let activity: string | undefined
   let stopReason: string | undefined
+  let gitBranch: string | undefined
   let errored = false
 
   for (const line of content.split('\n')) {
@@ -69,6 +70,11 @@ export function parseSession(filePath: string): ParsedSession | null {
       entry = JSON.parse(trimmed) as RawEntry
     } catch {
       continue
+    }
+
+    // Outside the switch: system/attachment entries carry it too.
+    if (typeof entry.gitBranch === 'string' && entry.gitBranch) {
+      gitBranch = entry.gitBranch
     }
 
     switch (entry.type) {
@@ -128,6 +134,7 @@ export function parseSession(filePath: string): ParsedSession | null {
     title: clean(title).slice(0, 120),
     activity: activity ? clean(activity).slice(0, 120) : undefined,
     stopReason,
+    gitBranch,
     errored,
   }
 }

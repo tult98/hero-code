@@ -6,6 +6,12 @@ export interface ParsedSession {
   activity?: string
   stopReason?: string
   errored?: boolean
+  /**
+   * Branch of the session cwd's git repo, from the last transcript entry that
+   * recorded one (Claude snapshots it per entry, so this tracks mid-session
+   * branch switches). Detached HEAD is the literal 'HEAD'.
+   */
+  gitBranch?: string
 }
 
 export interface SessionItem extends ParsedSession {
@@ -68,6 +74,7 @@ export interface RawEntry {
   isApiErrorMessage?: boolean
   error?: unknown
   sessionId?: string
+  gitBranch?: string
   pid?: number
   /** Live status Claude writes into `~/.claude/sessions/<pid>.json` (e.g. 'busy' | 'idle'). */
   status?: string
