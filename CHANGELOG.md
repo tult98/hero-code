@@ -2,6 +2,14 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.6] - 2026-07-02
+
+### Added
+
+- Keyboard shortcut `Shift+Cmd+C` (Mac) / `Ctrl+Shift+C` (Win/Linux) opens/focuses
+  the Claude Sessions sidebar. Uses the auto-generated `hero-code.sessions.focus`
+  command; overrides VS Code's default "Open New External Terminal" binding.
+
 ## [0.0.5] - 2026-07-02
 
 ### Changed
