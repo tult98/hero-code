@@ -7,6 +7,8 @@ export interface PersistedState {
   collapsed: string[]
   /** Id of the currently selected session row, if any. */
   selectedId?: string | null
+  /** Whether debug tooltips are on (mirrors the host's `heroCode.debugMode`). */
+  debug?: boolean
 }
 
 interface VsCodeApi {

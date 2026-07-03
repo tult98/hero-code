@@ -2,6 +2,28 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.9] - 2026-07-04
+
+### Changed
+
+- Pinned sessions are now lifted into a single collapsible **Pinned** section at the top
+  of the sidebar, directly below the search bar and above all folder groups, instead of
+  floating to the top of their own folder. A pinned session is removed from its folder
+  group while pinned and returns to it when unpinned. Pins from multiple workspace folders
+  share the one Pinned section.
+
+### Added
+
+- New `heroCode.debugMode` setting: when enabled, hovering a session row shows a debug
+  tooltip with its launch id, live id, and PID.
+
+### Fixed
+
+- Sessions no longer render as duplicate rows when several terminals resume the same
+  session: every diverged live id (not just the winning process's) is now aliased, and
+  the winning live process is picked deterministically (most-active: busy first, then
+  most-recently updated) instead of depending on registry file read order.
+
 ## [0.0.8] - 2026-07-02
 
 ### Added

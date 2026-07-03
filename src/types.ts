@@ -25,9 +25,11 @@ export interface SessionItem extends ParsedSession {
    * tracking/meta, but resume and workspace lookup must target this live id.
    */
   liveId?: string
+  /** PID of the live process backing this row, when running. Shown in debug mode. */
+  pid?: number
   /** User-set custom name; when present the row shows it instead of `title`. */
   customName?: string
-  /** Kept at the top of its group. */
+  /** Lifted into the top-level Pinned section, above all folder groups. */
   pinned?: boolean
   /** Marked done; hidden from the active list, revealed under "Done". */
   done?: boolean
@@ -78,5 +80,9 @@ export interface RawEntry {
   pid?: number
   /** Live status Claude writes into `~/.claude/sessions/<pid>.json` (e.g. 'busy' | 'idle'). */
   status?: string
+  /** Registry timestamps (ms) — used to pick the most-active among duplicate processes. */
+  startedAt?: number
+  updatedAt?: number
+  statusUpdatedAt?: number
   message?: { content?: unknown; stop_reason?: string }
 }

@@ -8,6 +8,8 @@ interface StateMessage {
   groups: SessionGroup[]
   /** When present, select this session id (used right after starting one). */
   selectId?: string
+  /** Debug mode: show per-row id/live/pid tooltips. Driven by `heroCode.debugMode`. */
+  debug?: boolean
 }
 
 export function App() {
@@ -15,6 +17,8 @@ export function App() {
   const [groups, setGroups] = useState<SessionGroup[]>(persisted?.groups ?? [])
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set(persisted?.collapsed ?? []))
   const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null)
+  // Debug tooltips (driven by the `heroCode.debugMode` setting, pushed by the host).
+  const [debug, setDebug] = useState<boolean>(persisted?.debug ?? false)
   // Reference time for relative timestamps; refreshed each time data arrives.
   const [now, setNow] = useState(() => Date.now())
   // Live filter query. Transient by design — not persisted to vscode state, so a
@@ -25,6 +29,7 @@ export function App() {
     const onMessage = (event: MessageEvent<StateMessage>) => {
       if (event.data?.type === 'state') {
         setGroups(event.data.groups)
+        setDebug(!!event.data.debug)
         setNow(Date.now())
         // Host-driven selection (e.g. right after starting a new session). Set
         // it directly rather than via handleSelect — the host already opened
@@ -42,8 +47,8 @@ export function App() {
 
   // Persist data + collapse state so a webview reload restores instantly.
   useEffect(() => {
-    vscode.setState({ groups, collapsed: [...collapsed], selectedId })
-  }, [groups, collapsed, selectedId])
+    vscode.setState({ groups, collapsed: [...collapsed], selectedId, debug })
+  }, [groups, collapsed, selectedId, debug])
 
   const handleSelect = (id: string) => {
     setSelectedId(id)
@@ -90,6 +95,19 @@ export function App() {
         .filter((group) => group.sessions.length > 0)
     : groups
 
+  // Pinned sessions are lifted out of their folder into a single top-level
+  // "Pinned" section above all folders. Sort running-first, then most recent
+  // (they're all pinned, so the pinned key from the host sort is moot here).
+  const pinnedSessions = filteredGroups
+    .flatMap((group) => group.sessions)
+    .filter((s) => s.pinned)
+    .sort((a, b) => Number(b.running) - Number(a.running) || b.mtime - a.mtime)
+  // Folder groups with their pinned rows removed. While searching, also drop
+  // groups left empty so results stay tight (mirrors the filter above).
+  const folderGroups = filteredGroups
+    .map((group) => ({ ...group, sessions: group.sessions.filter((s) => !s.pinned) }))
+    .filter((group) => !searching || group.sessions.length > 0)
+
   return (
     <div className='flex flex-col h-full min-h-0'>
       <div className='h-9 shrink-0 flex items-center justify-between pl-5 pr-2.5 text-xs tracking-wide text-vs-header'>
@@ -122,23 +140,44 @@ export function App() {
         </div>
       </div>
       <div className='flex-1 min-h-0 overflow-y-auto pt-1 px-1.5 pb-2'>
-        {filteredGroups.length ? (
-          filteredGroups.map((group) => (
-            <Group
-              key={group.name}
-              group={group}
-              now={now}
-              open={searching ? true : !collapsed.has(group.name)}
-              searching={searching}
-              onToggle={handleToggle}
-              onNewSession={handleNewSession}
-              selectedId={selectedId}
-              onSelect={handleSelect}
-              onPin={handlePin}
-              onRename={handleRename}
-              onMarkDone={handleMarkDone}
-            />
-          ))
+        {pinnedSessions.length || folderGroups.length ? (
+          <>
+            {pinnedSessions.length > 0 && (
+              <Group
+                key='Pinned'
+                group={{ name: 'Pinned', path: '', sessions: pinnedSessions }}
+                now={now}
+                open={searching ? true : !collapsed.has('Pinned')}
+                searching={searching}
+                isPinned
+                onToggle={handleToggle}
+                onNewSession={handleNewSession}
+                selectedId={selectedId}
+                debug={debug}
+                onSelect={handleSelect}
+                onPin={handlePin}
+                onRename={handleRename}
+                onMarkDone={handleMarkDone}
+              />
+            )}
+            {folderGroups.map((group) => (
+              <Group
+                key={group.name}
+                group={group}
+                now={now}
+                open={searching ? true : !collapsed.has(group.name)}
+                searching={searching}
+                onToggle={handleToggle}
+                onNewSession={handleNewSession}
+                selectedId={selectedId}
+                debug={debug}
+                onSelect={handleSelect}
+                onPin={handlePin}
+                onRename={handleRename}
+                onMarkDone={handleMarkDone}
+              />
+            ))}
+          </>
         ) : searching ? (
           <div className='px-3 py-3 text-vs-desc'>No matching sessions.</div>
         ) : (

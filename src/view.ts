@@ -12,6 +12,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView
   private timer?: ReturnType<typeof setInterval>
+  private configListener?: vscode.Disposable
   /**
    * New sessions started from the "+" button, keyed by their pre-assigned
    * session id → the folder path they belong to. Shown as optimistic rows until
@@ -131,11 +132,20 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       }
     }, 5000)
 
+    // Apply a debug-mode toggle immediately rather than waiting for the next poll.
+    this.configListener = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('heroCode.debugMode') && this.view?.visible) {
+        this.postState()
+      }
+    })
+
     view.onDidDispose(() => {
       if (this.timer) {
         clearInterval(this.timer)
         this.timer = undefined
       }
+      this.configListener?.dispose()
+      this.configListener = undefined
       this.view = undefined
     })
   }
@@ -172,7 +182,8 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
 
     const selectId = this.selectOnce
     this.selectOnce = undefined
-    this.view?.webview.postMessage({ type: 'state', groups, ...(selectId ? { selectId } : {}) })
+    const debug = vscode.workspace.getConfiguration('heroCode').get<boolean>('debugMode', false)
+    this.view?.webview.postMessage({ type: 'state', groups, debug, ...(selectId ? { selectId } : {}) })
   }
 
   private shellHtml(webview: vscode.Webview): string {

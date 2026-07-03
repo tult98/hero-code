@@ -9,9 +9,11 @@ export function Group({
   now,
   open,
   searching,
+  isPinned,
   onToggle,
   onNewSession,
   selectedId,
+  debug,
   onSelect,
   onPin,
   onRename,
@@ -22,9 +24,13 @@ export function Group({
   open: boolean
   /** A search query is active: show every (already-filtered) session flat. */
   searching: boolean
+  /** Top-level "Pinned" section: show a pin glyph and hide the new-session "+". */
+  isPinned?: boolean
   onToggle: (name: string, open: boolean) => void
   onNewSession: (path: string) => void
   selectedId: string | null
+  /** Show per-row debug tooltips (id / live id / pid). */
+  debug: boolean
   onSelect: (id: string) => void
   onPin: (id: string, pinned: boolean) => void
   onRename: (id: string, name: string) => void
@@ -45,6 +51,7 @@ export function Group({
       item={item}
       now={now}
       selected={item.id === selectedId}
+      debug={debug}
       onSelect={onSelect}
       onPin={onPin}
       onRename={onRename}
@@ -58,21 +65,24 @@ export function Group({
         <span
           className={`codicon codicon-triangle-down text-sm text-vs-desc transition-transform ${open ? '' : '-rotate-90'}`}
         />
+        {isPinned && <span className='codicon codicon-pinned text-xs text-vs-desc' aria-hidden />}
         <span className='flex-1 min-w-0 truncate text-xs font-bold tracking-wide' title={group.name}>
           {group.name}
         </span>
-        <span className='flex items-center gap-3'>
-          <span
-            className='codicon codicon-add text-sm text-vs-desc cursor-pointer rounded p-0.5 hover:text-vs-fg hover:bg-vs-hover-bg'
-            title='New session in workspace'
-            role='button'
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onNewSession(group.path)
-            }}
-          />
-        </span>
+        {!isPinned && (
+          <span className='flex items-center gap-3'>
+            <span
+              className='codicon codicon-add text-sm text-vs-desc cursor-pointer rounded p-0.5 hover:text-vs-fg hover:bg-vs-hover-bg'
+              title='New session in workspace'
+              role='button'
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onNewSession(group.path)
+              }}
+            />
+          </span>
+        )}
       </summary>
       {group.sessions.length ? (
         // While searching, `group.sessions` is already the match set — show it

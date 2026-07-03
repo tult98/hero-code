@@ -7,6 +7,7 @@ export function Row({
   item,
   now,
   selected,
+  debug,
   onSelect,
   onPin,
   onRename,
@@ -15,6 +16,8 @@ export function Row({
   item: SessionItem
   now: number
   selected: boolean
+  /** Show a debug tooltip with the row's id / live id / pid on hover. */
+  debug: boolean
   onSelect: (id: string) => void
   onPin: (id: string, pinned: boolean) => void
   onRename: (id: string, name: string) => void
@@ -71,6 +74,11 @@ export function Row({
   return (
     <li
       className={`group flex gap-2 rounded-md mb-0.5 py-2 pr-2 pl-2.5 cursor-pointer ${item.done ? 'opacity-60' : ''} ${selected ? 'bg-vs-sel-bg' : 'hover:bg-vs-hover-bg'}`}
+      title={
+        debug
+          ? `id: ${item.id}\nlive: ${item.liveId ?? '—'}\npid: ${item.pid ?? '—'}\nstatus: ${item.status}`
+          : undefined
+      }
       onClick={() => {
         if (!editing) {
           onSelect(item.id)

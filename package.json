@@ -2,7 +2,7 @@
   "name": "hero-code",
   "displayName": "Hero Code",
   "description": "Manage multiple Claude Code sessions at once — realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -26,6 +26,16 @@
   "main": "./dist/extension.js",
   "activationEvents": [],
   "contributes": {
+    "configuration": {
+      "title": "Hero Code",
+      "properties": {
+        "heroCode.debugMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show session debug info (launch id, live id, PID) in a hover tooltip on each session row."
+        }
+      }
+    },
     "commands": [
       {
         "command": "hero-code.mentionInSession",

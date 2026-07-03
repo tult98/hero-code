@@ -12,6 +12,30 @@ interface LiveSession {
   liveId: string
   /** Claude's own status string from the registry, e.g. 'busy' | 'idle'. */
   status?: string
+  /** PID of the winning process (for the debug tooltip). */
+  pid: number
+  /**
+   * Recency of the winning process (statusUpdatedAt/updatedAt/startedAt), used to
+   * break ties when several processes back the same launch id.
+   */
+  updatedAt: number
+  /**
+   * Every live id seen across *all* alive processes that share this launch id.
+   * When two terminals resume the same session, one may diverge to a new live id
+   * (Claude forks a fresh session id for the second); we alias every diverged id
+   * so its transcript never renders as a duplicate row.
+   */
+  allLiveIds: Set<string>
+}
+
+/** True when `a` is a more "active" live process than `b`: busy wins, then newer. */
+function moreActive(a: { status?: string; updatedAt: number }, b: { status?: string; updatedAt: number }): boolean {
+  const aBusy = a.status === 'busy'
+  const bBusy = b.status === 'busy'
+  if (aBusy !== bBusy) {
+    return aBusy
+  }
+  return a.updatedAt > b.updatedAt
 }
 
 /**
@@ -93,7 +117,23 @@ function getLiveSessions(): Map<string, LiveSession> {
     const liveId = entry.sessionId
     const cmd = commands.get(entry.pid)
     const launchId = cmd ? LAUNCH_ID_RE.exec(cmd)?.[1]?.toLowerCase() ?? liveId : liveId
-    byLaunch.set(launchId, { liveId, status: entry.status })
+    const updatedAt = entry.statusUpdatedAt ?? entry.updatedAt ?? entry.startedAt ?? 0
+    const candidate = { liveId, status: entry.status, pid: entry.pid, updatedAt }
+
+    // Several alive processes can share one launch id — e.g. two terminals both
+    // `--resume <id>`, where the second diverges to a fresh live id. The registry
+    // files are read in arbitrary order, so we must pick the winner deterministically
+    // (the most-active process) rather than letting the last one read overwrite the
+    // rest, and remember *every* live id so all diverged transcripts get aliased.
+    const existing = byLaunch.get(launchId)
+    if (!existing) {
+      byLaunch.set(launchId, { ...candidate, allLiveIds: new Set([liveId]) })
+    } else {
+      existing.allLiveIds.add(liveId)
+      if (moreActive(candidate, existing)) {
+        byLaunch.set(launchId, { ...candidate, allLiveIds: existing.allLiveIds })
+      }
+    }
   }
   return byLaunch
 }
@@ -167,11 +207,17 @@ function scanFolder(
   const aliasedLiveIds = new Set<string>()
   const synthesized: SessionItem[] = []
   for (const [launchId, info] of live) {
-    if (info.liveId === launchId) {
+    // Every live id (from any alive process) that differs from the launch id is a
+    // diverged transcript. There can be more than one when several terminals resume
+    // the same session, so alias them all — not just the winning process's.
+    const diverged = [...info.allLiveIds].filter((lid) => lid !== launchId)
+    if (diverged.length === 0) {
       continue
     }
     if (fs.existsSync(path.join(dir, `${launchId}.jsonl`))) {
-      aliasedLiveIds.add(info.liveId)
+      for (const lid of diverged) {
+        aliasedLiveIds.add(lid)
+      }
       continue
     }
     const liveCached = parseCached(path.join(dir, `${info.liveId}.jsonl`))
@@ -183,6 +229,7 @@ function scanFolder(
     synthesized.push({
       id: launchId,
       liveId: info.liveId,
+      pid: info.pid,
       mtime: liveCached.mtime,
       running: true,
       status: deriveStatus(info, liveCached.data),
@@ -227,6 +274,7 @@ function scanFolder(
     items.push({
       id,
       liveId: info && info.liveId !== id ? info.liveId : undefined,
+      pid: info?.pid,
       mtime,
       running: !!info,
       status: deriveStatus(info, data),
