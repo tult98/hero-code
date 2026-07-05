@@ -22,6 +22,11 @@
   --color-vs-sel-fg: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
   --color-vs-hover-bg: var(--vscode-list-hoverBackground);
 
+  /* Debug hover tooltip (id / live id / pid), styled as an editor hover widget. */
+  --color-vs-tip-bg: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+  --color-vs-tip-fg: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+  --color-vs-tip-border: var(--vscode-editorHoverWidget-border, var(--vscode-widget-border));
+
   /* `animate-scpulse` — the gentle pulse on a waiting session's indicator. */
   --animate-scpulse: scpulse 1.4s ease-in-out infinite;
 }

@@ -27,6 +27,11 @@ export function Row({
   const [draft, setDraft] = useState('')
   // Escape blurs the input but must not save; a normal blur (or Enter) saves.
   const skipCommit = useRef(false)
+  // Debug tooltip anchor. Tracking a whole-row hover (rather than the native
+  // `title`) makes the id/live/pid appear immediately on hovering anywhere on
+  // the row — the native tooltip only showed in the gaps between child elements
+  // that carry their own `title`, and only after the browser's ~1s delay.
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null)
 
   const spin = item.status === 'working' ? ' codicon-modifier-spin' : ''
   // On the accent selection background the muted desc/fg colors lose contrast,
@@ -71,14 +76,15 @@ export function Row({
     }
   }
 
+  // While debug mode is on the custom whole-row tooltip owns the hover, so
+  // suppress the native child `title`s that would otherwise pop over it.
+  const nativeTitle = (s: string | undefined) => (debug ? undefined : s)
+
   return (
     <li
       className={`group flex gap-2 rounded-md mb-0.5 py-2 pr-2 pl-2.5 cursor-pointer ${item.done ? 'opacity-60' : ''} ${selected ? 'bg-vs-sel-bg' : 'hover:bg-vs-hover-bg'}`}
-      title={
-        debug
-          ? `id: ${item.id}\nlive: ${item.liveId ?? '—'}\npid: ${item.pid ?? '—'}\nstatus: ${item.status}`
-          : undefined
-      }
+      onMouseEnter={debug ? (e) => setTip({ x: e.clientX, y: e.clientY }) : undefined}
+      onMouseLeave={debug ? () => setTip(null) : undefined}
       onClick={() => {
         if (!editing) {
           onSelect(item.id)
@@ -88,7 +94,7 @@ export function Row({
       <div className='w-4 shrink-0 flex justify-center items-start pt-0.5'>
         <span
           className={`codicon codicon-${STATUS_ICON[item.status]}${spin} text-sm leading-none ${STATUS_COLOR[item.status]}`}
-          title={STATUS_LABEL[item.status]}
+          title={nativeTitle(STATUS_LABEL[item.status])}
         />
       </div>
       <div className='flex-1 min-w-0'>
@@ -107,18 +113,18 @@ export function Row({
           ) : (
             <>
               {item.pinned && (
-                <span className={`codicon codicon-pinned shrink-0 text-xs ${subColor}`} title='Pinned' aria-hidden />
+                <span className={`codicon codicon-pinned shrink-0 text-xs ${subColor}`} title={nativeTitle('Pinned')} aria-hidden />
               )}
               <span
                 className={`flex-1 min-w-0 truncate text-xs font-semibold ${titleColor} ${item.done ? 'line-through' : ''}`}
-                title={displayName}
+                title={nativeTitle(displayName)}
               >
                 {displayName}
               </span>
               <div className='flex invisible group-hover:visible items-center gap-0.5 shrink-0'>
                 <span
                   className={actionBtn}
-                  title={item.pinned ? 'Unpin' : 'Pin'}
+                  title={nativeTitle(item.pinned ? 'Unpin' : 'Pin')}
                   role='button'
                   onClick={(e) => {
                     e.stopPropagation()
@@ -140,7 +146,7 @@ export function Row({
                     <span className='codicon codicon-pin translate-y-px' />
                   )}
                 </span>
-                <span className={actionBtn} title='Rename' role='button' onClick={startEdit}>
+                <span className={actionBtn} title={nativeTitle('Rename')} role='button' onClick={startEdit}>
                   <svg
                     xmlns='http://www.w3.org/2000/svg'
                     width='12'
@@ -158,7 +164,7 @@ export function Row({
                 </span>
                 <span
                   className={`${actionBtn} codicon codicon-check`}
-                  title={item.done ? 'Restore' : 'Mark done'}
+                  title={nativeTitle(item.done ? 'Restore' : 'Mark done')}
                   role='button'
                   onClick={(e) => {
                     e.stopPropagation()
@@ -174,13 +180,25 @@ export function Row({
           <span className='shrink-0 whitespace-nowrap'>{relativeTime(now - item.mtime)}</span>
         </div>
         {item.gitBranch && (
-          <div className={`mt-0.5 flex items-center gap-1 text-xs ${subColor}`} title={item.gitBranch}>
+          <div className={`mt-0.5 flex items-center gap-1 text-xs ${subColor}`} title={nativeTitle(item.gitBranch)}>
             <span className='codicon codicon-git-branch shrink-0 text-xs! leading-none' aria-hidden />
             <span className='min-w-0 truncate'>{item.gitBranch}</span>
           </div>
         )}
         {item.activity && <div className={`mt-1.5 truncate text-xs ${subColor}`}>{item.activity}</div>}
       </div>
+      {debug && tip && (
+        <div
+          className='fixed z-50 pointer-events-none max-w-[240px] whitespace-pre-wrap break-all rounded border px-2 py-1 text-xs leading-relaxed shadow-lg bg-vs-tip-bg text-vs-tip-fg border-vs-tip-border'
+          style={{
+            fontFamily: 'var(--vscode-editor-font-family, monospace)',
+            left: Math.max(8, Math.min(tip.x + 12, window.innerWidth - 248)),
+            top: Math.min(tip.y + 12, window.innerHeight - 96),
+          }}
+        >
+          {`id: ${item.id}\nlive: ${item.liveId ?? '—'}\npid: ${item.pid ?? '—'}\nstatus: ${item.status}`}
+        </div>
+      )}
     </li>
   )
 }

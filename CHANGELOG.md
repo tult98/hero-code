@@ -2,6 +2,15 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.10] - 2026-07-04
+
+### Changed
+
+- The `heroCode.debugMode` hover tooltip (launch id / live id / PID) now shows when
+  hovering anywhere on a session row and appears immediately, instead of only in the gaps
+  between the row's icons/buttons and after the browser's tooltip delay. While debug mode
+  is on, the row's other native tooltips are suppressed so they don't compete with it.
+
 ## [0.0.9] - 2026-07-04
 
 ### Changed
