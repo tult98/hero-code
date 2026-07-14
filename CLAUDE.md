@@ -6,8 +6,6 @@ Guidance for Claude Code when working in this repository.
 
 - **Push directly to `main`. Do NOT create pull requests.** Commit changes and push
   straight to `main`; no feature branches or PRs are needed unless explicitly requested.
-- Bump the version in `package.json` (and both entries in `package-lock.json`) and add a
-  `CHANGELOG.md` entry when shipping user-facing changes.
 
 ## Project
 
@@ -42,9 +40,9 @@ sessions across the open workspace folders — listing each session with its liv
 
 ## Key concepts
 
-- **Launch id vs live id**: the extension tracks a session by its *launch* id
+- **Launch id vs live id**: the extension tracks a session by its _launch_ id
   (`--session-id`/`--resume`, stable, used for terminals, pins, and metadata). Claude
-  assigns a new *live* session id on `/clear`. Rows stay keyed by the stable launch id;
+  assigns a new _live_ session id on `/clear`. Rows stay keyed by the stable launch id;
   `SessionItem.liveId` carries the current live id when they differ (used for resume and
   workspace resolution).
 - Per-session user metadata (pin / custom name / done) is persisted in the extension
