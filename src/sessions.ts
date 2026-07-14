@@ -161,25 +161,32 @@ function deriveStatus(live: LiveSession | undefined, parsed: ParsedSession): Sta
 }
 
 /** Cache parsed sessions by path + mtime so auto-refresh stays cheap. */
-const cache = new Map<string, { mtime: number; data: ParsedSession | null }>()
+const cache = new Map<string, { mtime: number; birthtime: number; data: ParsedSession | null }>()
 
 /** Parse a transcript file, reusing the cached result while its mtime is unchanged. */
-function parseCached(full: string): { mtime: number; data: ParsedSession | null } | null {
+function parseCached(
+  full: string,
+): { mtime: number; birthtime: number; data: ParsedSession | null } | null {
   let mtime: number
+  let birthtime: number
   try {
-    mtime = fs.statSync(full).mtimeMs
+    const stat = fs.statSync(full)
+    mtime = stat.mtimeMs
+    // birthtime is the file's creation time — stable across writes. Some
+    // filesystems report 0; fall back to mtime so ordering stays sane.
+    birthtime = stat.birthtimeMs || stat.mtimeMs
   } catch {
     return null
   }
   let cached = cache.get(full)
   if (!cached || cached.mtime !== mtime) {
-    cached = { mtime, data: parseSession(full) }
+    cached = { mtime, birthtime, data: parseSession(full) }
     cache.set(full, cached)
   }
   return cached
 }
 
-/** Scan one workspace folder's transcript directory, most recent first. */
+/** Scan one workspace folder's transcript directory, newest-created first. */
 function scanFolder(
   folderPath: string,
   live: Map<string, LiveSession>,
@@ -231,6 +238,7 @@ function scanFolder(
       liveId: info.liveId,
       pid: info.pid,
       mtime: liveCached.mtime,
+      createdAt: liveCached.birthtime,
       running: true,
       status: deriveStatus(info, liveCached.data),
       ...liveCached.data,
@@ -276,6 +284,9 @@ function scanFolder(
       liveId: info && info.liveId !== id ? info.liveId : undefined,
       pid: info?.pid,
       mtime,
+      // Always the launch transcript's birthtime — keep the row's position
+      // fixed even after `/clear` swaps in a newer live transcript.
+      createdAt: cached.birthtime,
       running: !!info,
       status: deriveStatus(info, data),
       ...data,
@@ -285,12 +296,13 @@ function scanFolder(
     })
   }
 
-  // Pinned first, then running, then most-recently active.
+  // Pinned first, then newest-created first — a stable order that never
+  // reorders as a session works or when its process starts/stops.
   items.sort(
     (a, b) =>
       Number(!!b.pinned) - Number(!!a.pinned) ||
-      Number(b.running) - Number(a.running) ||
-      b.mtime - a.mtime,
+      b.createdAt - a.createdAt ||
+      b.id.localeCompare(a.id),
   )
   return items
 }

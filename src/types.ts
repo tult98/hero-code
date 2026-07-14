@@ -17,6 +17,12 @@ export interface ParsedSession {
 export interface SessionItem extends ParsedSession {
   id: string
   mtime: number
+  /**
+   * Creation time (ms) of the session's launch transcript — a stable ordering
+   * key that, unlike `mtime`, never advances as the session works or after
+   * `/clear`, so rows hold a fixed position in the list.
+   */
+  createdAt: number
   status: Status
   running: boolean
   /**

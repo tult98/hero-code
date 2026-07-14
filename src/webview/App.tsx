@@ -96,12 +96,12 @@ export function App() {
     : groups
 
   // Pinned sessions are lifted out of their folder into a single top-level
-  // "Pinned" section above all folders. Sort running-first, then most recent
-  // (they're all pinned, so the pinned key from the host sort is moot here).
+  // "Pinned" section above all folders. Newest-created first, held fixed so
+  // rows never reorder as sessions work (they're all pinned, so that key is moot).
   const pinnedSessions = filteredGroups
     .flatMap((group) => group.sessions)
     .filter((s) => s.pinned)
-    .sort((a, b) => Number(b.running) - Number(a.running) || b.mtime - a.mtime)
+    .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id))
   // Folder groups with their pinned rows removed. While searching, also drop
   // groups left empty so results stay tight (mirrors the filter above).
   const folderGroups = filteredGroups

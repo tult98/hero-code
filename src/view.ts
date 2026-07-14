@@ -174,6 +174,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         id,
         title: 'New session',
         mtime: Date.now(),
+        createdAt: Date.now(),
         running: true,
         status: 'waiting',
       }

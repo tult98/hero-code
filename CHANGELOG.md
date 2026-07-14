@@ -2,6 +2,16 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.11] - 2026-07-14
+
+### Changed
+
+- Sessions now hold a stable, newest-first position in the sidebar instead of reordering as
+  they work. Rows are ordered by the session's creation time rather than its transcript's
+  last-write time, so a working session no longer jumps to the top on every turn, and a
+  session no longer moves when its process starts or stops. Status is still shown via each
+  row's icon and label.
+
 ## [0.0.10] - 2026-07-04
 
 ### Changed
