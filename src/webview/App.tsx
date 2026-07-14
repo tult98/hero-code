@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import type { SessionGroup } from '../types.js'
+import type { SessionGroup, SessionItem, Status } from '../types.js'
 import { vscode } from './vscode-api.js'
 import { Group } from './Group.js'
+import { StatusFilter } from './StatusFilter.js'
 
 interface StateMessage {
   type: 'state'
@@ -24,6 +25,9 @@ export function App() {
   // Live filter query. Transient by design — not persisted to vscode state, so a
   // reopened/reloaded panel never restores a stale filter.
   const [search, setSearch] = useState('')
+  // Status filter (multi-select). Empty set = "All". Transient like `search`,
+  // for the same reason: a reopened panel shouldn't restore a stale filter.
+  const [statusFilter, setStatusFilter] = useState<Set<Status>>(new Set())
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<StateMessage>) => {
@@ -78,18 +82,50 @@ export function App() {
     })
   }
 
+  const handleStatusToggle = (status: Status) =>
+    setStatusFilter((prev) => {
+      const next = new Set(prev)
+      if (next.has(status)) {
+        next.delete(status)
+      } else {
+        next.add(status)
+      }
+      return next
+    })
+
   // Filter sessions by name + activity. When active, drop empty groups; groups
   // are force-opened below and Group renders matches flat (no collapse limit).
   const q = search.trim().toLowerCase()
   const searching = q.length > 0
-  const filteredGroups = searching
+  const matchesQuery = (s: SessionItem) =>
+    !searching ||
+    (s.customName ?? s.title).toLowerCase().includes(q) ||
+    (s.activity ?? '').toLowerCase().includes(q)
+
+  // Per-status counts within the search scope (the status filter itself is
+  // ignored, so the chips show how many of each status are available to filter
+  // to). `total` drives the "All" chip.
+  const counts: Record<Status, number> = { working: 0, waiting: 0, idle: 0, error: 0 }
+  for (const group of groups) {
+    for (const s of group.sessions) {
+      if (matchesQuery(s)) counts[s.status]++
+    }
+  }
+  const totalCount = counts.working + counts.waiting + counts.idle + counts.error
+  const hasSessions = groups.some((group) => group.sessions.length > 0)
+
+  // Any filter active — text query or status chips. Everything downstream keys
+  // off this: force-open, flat render, drop-empty groups, and the empty state.
+  const filtering = searching || statusFilter.size > 0
+
+  // Filter sessions by name + activity + status. When filtering, drop empty
+  // groups; groups are force-opened below and Group renders matches flat.
+  const filteredGroups = filtering
     ? groups
         .map((group) => ({
           ...group,
           sessions: group.sessions.filter(
-            (s) =>
-              (s.customName ?? s.title).toLowerCase().includes(q) ||
-              (s.activity ?? '').toLowerCase().includes(q),
+            (s) => matchesQuery(s) && (statusFilter.size === 0 || statusFilter.has(s.status)),
           ),
         }))
         .filter((group) => group.sessions.length > 0)
@@ -106,7 +142,7 @@ export function App() {
   // groups left empty so results stay tight (mirrors the filter above).
   const folderGroups = filteredGroups
     .map((group) => ({ ...group, sessions: group.sessions.filter((s) => !s.pinned) }))
-    .filter((group) => !searching || group.sessions.length > 0)
+    .filter((group) => !filtering || group.sessions.length > 0)
 
   return (
     <div className='flex flex-col h-full min-h-0'>
@@ -134,11 +170,23 @@ export function App() {
               if (e.key === 'Escape') {
                 e.preventDefault()
                 setSearch('')
+                setStatusFilter(new Set())
               }
             }}
           />
         </div>
       </div>
+      {hasSessions && (
+        <div className='shrink-0 px-2.5 pb-2'>
+          <StatusFilter
+            active={statusFilter}
+            counts={counts}
+            total={totalCount}
+            onToggle={handleStatusToggle}
+            onClear={() => setStatusFilter(new Set())}
+          />
+        </div>
+      )}
       <div className='flex-1 min-h-0 overflow-y-auto pt-1 px-1.5 pb-2'>
         {pinnedSessions.length || folderGroups.length ? (
           <>
@@ -147,8 +195,8 @@ export function App() {
                 key='Pinned'
                 group={{ name: 'Pinned', path: '', sessions: pinnedSessions }}
                 now={now}
-                open={searching ? true : !collapsed.has('Pinned')}
-                searching={searching}
+                open={filtering ? true : !collapsed.has('Pinned')}
+                searching={filtering}
                 isPinned
                 onToggle={handleToggle}
                 onNewSession={handleNewSession}
@@ -165,8 +213,8 @@ export function App() {
                 key={group.name}
                 group={group}
                 now={now}
-                open={searching ? true : !collapsed.has(group.name)}
-                searching={searching}
+                open={filtering ? true : !collapsed.has(group.name)}
+                searching={filtering}
                 onToggle={handleToggle}
                 onNewSession={handleNewSession}
                 selectedId={selectedId}
@@ -178,7 +226,7 @@ export function App() {
               />
             ))}
           </>
-        ) : searching ? (
+        ) : filtering ? (
           <div className='px-3 py-3 text-vs-desc'>No matching sessions.</div>
         ) : (
           <div className='px-3 py-3 text-vs-desc'>No workspace open.</div>

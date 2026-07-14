@@ -2,6 +2,15 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.12] - 2026-07-14
+
+### Added
+
+- Filter sessions by status. A row of multi-select chips (All / Working / Waiting / Idle /
+  Error) sits under the search box; each chip shows a live count of matching sessions. Tap
+  chips to show only those statuses — they combine with each other and with the text
+  search. The filter is transient and resets when the panel is reopened.
+
 ## [0.0.11] - 2026-07-14
 
 ### Changed
