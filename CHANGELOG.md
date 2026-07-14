@@ -2,7 +2,7 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
-## [Unreleased]
+## [0.0.13] - 2026-07-14
 
 ### Added
 
@@ -14,6 +14,21 @@ All notable changes to the "Hero Code" extension will be documented in this file
   Claude Agent SDK, it streams responses, shows tool calls with Approve/Deny, lets you
   interrupt a turn, and loads a session's prior history when you switch to it. Sessions
   already running live in a terminal still open in a terminal.
+- Redesigned the chat window to match the Claude design: a header with the session title
+  and a live status pill, a composer with a rounded input, action icons, an orange
+  accent Send button, and a model/mode/branch/context meta row. The transcript now
+  renders full markdown (via react-markdown), collapsible per-tool cards (Read/Bash/Edit
+  diff/Write/Todo/Subagent), an enhanced empty state, a streaming indicator, and a
+  "Jump to latest" control.
+- Recolored the chat window's remaining blue accents to the orange accent for a consistent
+  look: the tool-running and todo spinners, the "Working" status pill, markdown links, and
+  the permission-card Approve button are now orange (the sidebar's status colors are
+  unchanged).
+
+### Fixed
+
+- Chat webview assets are now cache-busted per load, so a rebuilt bundle reliably
+  refreshes instead of serving a stale cached copy.
 
 ## [0.0.12] - 2026-07-14
 

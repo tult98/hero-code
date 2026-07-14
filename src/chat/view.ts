@@ -121,10 +121,12 @@ export class ChatView implements vscode.WebviewViewProvider {
 
   private shellHtml(webview: vscode.Webview): string {
     const uri = (...p: string[]) => webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', ...p))
-    const scriptUri = uri('chat.js')
-    const styleUri = uri('webview.css')
-    const codiconUri = uri('codicon.css')
     const nonce = getNonce()
+    // Cache-bust the bundle + stylesheet: VS Code caches webview resources by
+    // URL, so without a changing query a rebuilt dist/ won't load on reload.
+    const scriptUri = `${uri('chat.js')}?v=${nonce}`
+    const styleUri = `${uri('webview.css')}?v=${nonce}`
+    const codiconUri = uri('codicon.css')
     const cspSource = webview.cspSource
     return `<!DOCTYPE html>
 <html lang="en">
