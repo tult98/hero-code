@@ -4,6 +4,8 @@
    .tsx components and the .ts status map). */
 @source "./*.ts";
 @source "./*.tsx";
+@source "./chat/*.ts";
+@source "./chat/*.tsx";
 
 /*
  * Bridge VS Code's theme variables into Tailwind color tokens so utilities like

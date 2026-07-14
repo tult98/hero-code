@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { ContentBlock, ParsedSession, RawEntry, ToolInput } from './types.js'
+import type { ChatBlock, ChatMessage, ChatToolUseBlock } from './chat/types.js'
 
 /**
  * Claude Code stores each session as a `.jsonl` file under
@@ -19,7 +20,7 @@ function isMeta(s: string): boolean {
 }
 
 /** A short, human label for the last assistant tool use. */
-function describeTool(name: string, input: ToolInput | undefined): string {
+export function describeTool(name: string, input: ToolInput | undefined): string {
   const i = input ?? {}
   switch (name) {
     case 'Edit':
@@ -137,4 +138,117 @@ export function parseSession(filePath: string): ParsedSession | null {
     gitBranch,
     errored,
   }
+}
+
+/** Longest tool_result text we keep for display, to bound the hydrate payload. */
+const MAX_RESULT_CHARS = 4000
+
+/** Flatten a tool_result `content` (string or `{type:'text',text}[]`) to text. */
+function toolResultText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((b) => (b && typeof b === 'object' && typeof (b as ContentBlock).text === 'string' ? (b as ContentBlock).text : ''))
+      .join('')
+  }
+  return ''
+}
+
+/**
+ * Parse a session `.jsonl` into an ordered list of chat messages for display
+ * when opening an existing (idle) session in the GUI chat. This is a fuller
+ * read than `parseSession` (which only extracts a title): it emits user text,
+ * assistant text, and tool-use cards, and attaches each tool_result back onto
+ * its tool_use block. Sub-agent (sidechain) turns are excluded to keep the main
+ * conversation clean.
+ */
+export function parseTranscriptMessages(filePath: string): ChatMessage[] {
+  let content: string
+  try {
+    content = fs.readFileSync(filePath, 'utf8')
+  } catch {
+    return []
+  }
+
+  const messages: ChatMessage[] = []
+  // tool_use id → its rendered block, so a later tool_result can update it.
+  const toolBlocks = new Map<string, ChatToolUseBlock>()
+  let synthetic = 0
+
+  for (const line of content.split('\n')) {
+    if (!line.trim()) {
+      continue
+    }
+    let entry: RawEntry
+    try {
+      entry = JSON.parse(line) as RawEntry
+    } catch {
+      continue
+    }
+    if (entry.isSidechain || (entry.type !== 'user' && entry.type !== 'assistant')) {
+      continue
+    }
+
+    const raw = entry.message?.content
+    const id = entry.uuid ?? `m${synthetic++}`
+
+    if (entry.type === 'user') {
+      // A plain typed prompt (string content), skipping slash-command/meta noise.
+      if (typeof raw === 'string') {
+        if (!isMeta(raw) && raw.trim()) {
+          messages.push({ id, role: 'user', blocks: [{ type: 'text', text: raw }] })
+        }
+        continue
+      }
+      if (!Array.isArray(raw)) {
+        continue
+      }
+      const text: ChatBlock[] = []
+      for (const block of raw as ContentBlock[]) {
+        if (block.type === 'tool_result' && block.tool_use_id) {
+          // Attach the result to the matching tool card from an earlier turn.
+          const target = toolBlocks.get(block.tool_use_id)
+          if (target) {
+            target.result = toolResultText(block.content).slice(0, MAX_RESULT_CHARS)
+            target.status = block.is_error ? 'error' : 'done'
+          }
+        } else if (block.type === 'text' && block.text?.trim()) {
+          text.push({ type: 'text', text: block.text })
+        }
+      }
+      if (text.length) {
+        messages.push({ id, role: 'user', blocks: text })
+      }
+      continue
+    }
+
+    // assistant
+    if (!Array.isArray(raw)) {
+      continue
+    }
+    const blocks: ChatBlock[] = []
+    for (const block of raw as ContentBlock[]) {
+      if (block.type === 'text' && block.text?.trim()) {
+        blocks.push({ type: 'text', text: block.text })
+      } else if (block.type === 'tool_use' && block.id) {
+        const tool: ChatToolUseBlock = {
+          type: 'tool_use',
+          id: block.id,
+          name: block.name ?? 'tool',
+          label: describeTool(block.name ?? 'tool', block.input),
+          input: block.input,
+          status: 'done',
+        }
+        toolBlocks.set(block.id, tool)
+        blocks.push(tool)
+      }
+    }
+    if (blocks.length) {
+      messages.push({ id, role: 'assistant', blocks })
+    }
+  }
+
+  return messages
 }

@@ -73,6 +73,13 @@ export interface ContentBlock {
   name?: string
   input?: ToolInput
   text?: string
+  /** tool_use id (assistant blocks) / tool_use_id (user tool_result blocks). */
+  id?: string
+  tool_use_id?: string
+  /** tool_result payload: a string, or an array of `{ type:'text', text }`. */
+  content?: unknown
+  /** True on a tool_result block whose tool errored. */
+  is_error?: boolean
 }
 
 export interface RawEntry {
@@ -90,5 +97,9 @@ export interface RawEntry {
   startedAt?: number
   updatedAt?: number
   statusUpdatedAt?: number
-  message?: { content?: unknown; stop_reason?: string }
+  message?: { content?: unknown; stop_reason?: string; role?: string }
+  /** Message uuid, when present — used as a stable chat-message id. */
+  uuid?: string
+  /** True for sub-agent (Task) internal turns; excluded from the main chat view. */
+  isSidechain?: boolean
 }

@@ -29,6 +29,19 @@
     "configuration": {
       "title": "Hero Code",
       "properties": {
+        "heroCode.newSessionMode": {
+          "type": "string",
+          "enum": [
+            "terminal",
+            "chat"
+          ],
+          "enumDescriptions": [
+            "Open new and resumed sessions in an integrated terminal running the Claude CLI (default).",
+            "Open new and idle sessions in an in-editor GUI chat window powered by the Claude Agent SDK. Sessions already running live in a terminal still open in a terminal."
+          ],
+          "default": "terminal",
+          "description": "How to open Claude sessions: an integrated terminal, or an in-editor GUI chat window."
+        },
         "heroCode.debugMode": {
           "type": "boolean",
           "default": false,
@@ -61,6 +74,11 @@
           "id": "hero-code-sessions",
           "title": "Claude Sessions",
           "icon": "media/claude.svg"
+        },
+        {
+          "id": "hero-code-chat",
+          "title": "Claude Chat",
+          "icon": "media/claude.svg"
         }
       ]
     },
@@ -69,6 +87,13 @@
         {
           "id": "hero-code.sessions",
           "name": "Sessions",
+          "type": "webview"
+        }
+      ],
+      "hero-code-chat": [
+        {
+          "id": "hero-code.chat",
+          "name": "Chat",
           "type": "webview"
         }
       ]
@@ -84,6 +109,7 @@
     "release": "vsce publish"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.209",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

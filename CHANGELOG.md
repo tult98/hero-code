@@ -2,6 +2,19 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- GUI chat window (opt-in). A new `heroCode.newSessionMode` setting (`terminal` by
+  default, or `chat`) can open sessions in a docked chat view instead of a terminal. The
+  chat is a dockable view — drag it to the Secondary Side Bar to keep it on the right. In
+  chat mode, the "+" button and clicking an idle session open a single reusable chat view;
+  switching sessions in the sidebar swaps which conversation it shows. Powered by the
+  Claude Agent SDK, it streams responses, shows tool calls with Approve/Deny, lets you
+  interrupt a turn, and loads a session's prior history when you switch to it. Sessions
+  already running live in a terminal still open in a terminal.
+
 ## [0.0.12] - 2026-07-14
 
 ### Added

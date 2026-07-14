@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto'
 import type { SessionItem, SessionMeta } from './types.js'
 import { getSessionGroups } from './sessions.js'
 import { hasSessionTerminal, openNewSessionTerminal, openSessionTerminal } from './terminal.js'
+import type { ChatSessionManager } from './chat/manager.js'
+import type { ChatView } from './chat/view.js'
 
 /** `globalState` key under which per-session user metadata is stored. */
 const META_KEY = 'hero-code.sessionMeta'
@@ -38,7 +40,56 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly memento: vscode.Memento,
+    private readonly chat: ChatSessionManager,
+    private readonly chatView: ChatView,
   ) {}
+
+  /** Whether new/idle sessions open in the GUI chat instead of a terminal. */
+  private get chatMode(): boolean {
+    return vscode.workspace.getConfiguration('heroCode').get<string>('newSessionMode') === 'chat'
+  }
+
+  /**
+   * Open a session on click. In terminal mode, always a terminal. In chat mode,
+   * coexist: a chat-owned session (or an idle one we can resume) opens in the
+   * chat panel; a session already backed by a terminal, or running live outside
+   * our control, opens in a terminal.
+   */
+  private openSession(id: string, title?: string, liveId?: string, path?: string, running?: boolean): void {
+    if (!this.chatMode) {
+      openSessionTerminal(id, title, liveId)
+      return
+    }
+    // After `/clear` the live conversation lives under `liveId`; that's what the
+    // chat resumes and keys on.
+    const target = liveId || id
+    if (this.chat.has(target)) {
+      this.chatView.show(target)
+    } else if (hasSessionTerminal(id)) {
+      openSessionTerminal(id, title, liveId)
+    } else if (!running && path) {
+      void this.chat
+        .resume(target, path)
+        .then((sid) => this.chatView.show(sid))
+        .catch((e) => vscode.window.showErrorMessage(`Could not open chat: ${e instanceof Error ? e.message : e}`))
+    } else {
+      openSessionTerminal(id, title, liveId)
+    }
+  }
+
+  /** Start a new SDK-driven chat session, then reveal it in the chat panel. */
+  private newChatSession(folderPath: string): void {
+    void this.chat
+      .create(folderPath)
+      .then((id) => {
+        this.pending.set(id, folderPath)
+        this.selectOnce = id
+        this.selected = id
+        this.chatView.show(id)
+        this.postState()
+      })
+      .catch((e) => vscode.window.showErrorMessage(`Could not start chat session: ${e instanceof Error ? e.message : e}`))
+  }
 
   /** All persisted per-session metadata, keyed by session id. */
   private getMeta(): Record<string, SessionMeta> {
@@ -94,6 +145,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         title?: string
         name?: string
         path?: string
+        running?: boolean
         pinned?: boolean
         done?: boolean
       }) => {
@@ -101,14 +153,18 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
           this.postState()
         } else if (msg.type === 'open' && msg.id) {
           this.selected = msg.id
-          openSessionTerminal(msg.id, msg.title, msg.liveId)
+          this.openSession(msg.id, msg.title, msg.liveId, msg.path, msg.running)
         } else if (msg.type === 'newSession' && msg.path) {
-          const id = randomUUID()
-          openNewSessionTerminal(msg.path, id)
-          this.pending.set(id, msg.path)
-          this.selectOnce = id
-          this.selected = id
-          this.postState()
+          if (this.chatMode) {
+            this.newChatSession(msg.path)
+          } else {
+            const id = randomUUID()
+            openNewSessionTerminal(msg.path, id)
+            this.pending.set(id, msg.path)
+            this.selectOnce = id
+            this.selected = id
+            this.postState()
+          }
         } else if (msg.type === 'pin' && msg.id) {
           this.setMeta(msg.id, { pinned: msg.pinned })
         } else if (msg.type === 'rename' && msg.id) {
@@ -156,8 +212,8 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     // Merge optimistic rows for "+"-started sessions whose transcript hasn't
     // been written yet, so they appear (and can be selected) immediately.
     for (const [id, folderPath] of this.pending) {
-      if (!hasSessionTerminal(id)) {
-        // The terminal was closed before the first message — abandon the row.
+      if (!hasSessionTerminal(id) && !this.chat.has(id)) {
+        // The terminal/chat session ended before the first message — abandon it.
         this.pending.delete(id)
         continue
       }

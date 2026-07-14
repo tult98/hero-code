@@ -1,6 +1,8 @@
 import * as vscode from 'vscode'
 import { SessionsViewProvider } from './view.js'
 import { mentionInSessionTerminal, reconnectTerminals } from './terminal.js'
+import { ChatSessionManager } from './chat/manager.js'
+import { ChatView } from './chat/view.js'
 
 export function activate(context: vscode.ExtensionContext) {
   // Re-adopt any terminals VS Code restored from before a window reload, before
@@ -8,9 +10,17 @@ export function activate(context: vscode.ExtensionContext) {
   // rather than spawning a duplicate.
   reconnectTerminals()
 
+  // The GUI chat engine: one shared docked chat view, driven by SDK sessions.
+  // The view is created first so the manager can emit events straight into it.
+  const chatView = new ChatView(context.extensionUri)
+  const chatManager = new ChatSessionManager((event) => chatView.handleEvent(event))
+  chatView.attach(chatManager)
+
   const provider = new SessionsViewProvider(
     context.extensionUri,
     context.globalState,
+    chatManager,
+    chatView,
   )
 
   context.subscriptions.push(
@@ -18,19 +28,28 @@ export function activate(context: vscode.ExtensionContext) {
       SessionsViewProvider.viewType,
       provider,
     ),
+    // The chat view. `retainContextWhenHidden` keeps the conversation mounted
+    // when the view is collapsed or hidden; VS Code recreates the view itself
+    // after a window reload (no serializer needed).
+    vscode.window.registerWebviewViewProvider(ChatView.viewType, chatView, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
     vscode.commands.registerCommand('hero-code.mentionInSession', () =>
-      mentionInSession(provider),
+      mentionInSession(provider, chatManager, chatView),
     ),
+    // Tear down SDK subprocesses when the extension unloads.
+    { dispose: () => chatManager.disposeAll() },
   )
 }
 
 /**
- * Insert an `@file` mention for the active editor into the terminal of the
- * currently-selected session, without submitting it. With a selection, the
- * mention carries the line range (`@path#L10-20`); with an empty selection it
- * references the whole file (`@path`).
+ * Insert an `@file` mention for the active editor into the currently-selected
+ * session, without submitting it. Routes to the chat input when that session is
+ * chat-owned, otherwise to its terminal. With a selection, the mention carries
+ * the line range (`@path#L10-20`); with an empty selection it references the
+ * whole file (`@path`).
  */
-function mentionInSession(provider: SessionsViewProvider) {
+function mentionInSession(provider: SessionsViewProvider, chat: ChatSessionManager, chatView: ChatView) {
   const editor = vscode.window.activeTextEditor
   if (!editor) {
     vscode.window.showWarningMessage(
@@ -63,7 +82,9 @@ function mentionInSession(provider: SessionsViewProvider) {
       start === end ? `@${rel}#L${start} ` : `@${rel}#L${start}-${end} `
   }
 
-  if (!mentionInSessionTerminal(sessionId, mention)) {
+  if (chat.has(sessionId)) {
+    chatView.mention(sessionId, mention)
+  } else if (!mentionInSessionTerminal(sessionId, mention)) {
     vscode.window.showWarningMessage(
       'The selected session has no open terminal.',
     )

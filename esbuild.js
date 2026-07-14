@@ -76,30 +76,41 @@ async function main() {
 		sourcesContent: false,
 		platform: 'node',
 		outfile: 'dist/extension.js',
-		external: ['vscode'],
+		// `vscode` is provided by the runtime. The Claude Agent SDK is an ESM-only
+		// package that resolves its own bundled CLI via `import.meta.url`, so it must
+		// stay an external module loaded from `node_modules` at runtime (via a dynamic
+		// `import()`) rather than being bundled into this CJS output.
+		external: ['vscode', '@anthropic-ai/claude-agent-sdk'],
 		logLevel: 'silent',
 		plugins: [esbuildProblemMatcherPlugin],
 	});
 
-	// Webview: browser/IIFE React bundle loaded by the panel shell. React is
-	// bundled in (no externals); JSX uses the automatic runtime.
-	const webviewCtx = await esbuild.context({
-		entryPoints: ['src/webview/main.tsx'],
-		bundle: true,
-		format: 'iife',
-		jsx: 'automatic',
-		minify: production,
-		sourcemap: !production,
-		sourcesContent: false,
-		platform: 'browser',
-		outfile: 'dist/webview.js',
-		// React/react-dom read `process.env.NODE_ENV`, which doesn't exist in a
-		// webview. Substitute it so the bundle loads and picks the right React build.
-		define: { 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
-		logLevel: 'silent',
-	});
+	// Webview: browser/IIFE React bundles loaded by a panel shell. React is
+	// bundled in (no externals); JSX uses the automatic runtime. Two entries: the
+	// sidebar Sessions list and the editor-area chat window.
+	const webviewContext = (entry, outfile) =>
+		esbuild.context({
+			entryPoints: [entry],
+			bundle: true,
+			format: 'iife',
+			jsx: 'automatic',
+			minify: production,
+			sourcemap: !production,
+			sourcesContent: false,
+			platform: 'browser',
+			outfile,
+			// React/react-dom read `process.env.NODE_ENV`, which doesn't exist in a
+			// webview. Substitute it so the bundle loads and picks the right React build.
+			define: { 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
+			logLevel: 'silent',
+		});
 
-	const contexts = [hostCtx, webviewCtx];
+	const [webviewCtx, chatCtx] = await Promise.all([
+		webviewContext('src/webview/main.tsx', 'dist/webview.js'),
+		webviewContext('src/webview/chat/main.tsx', 'dist/chat.js'),
+	]);
+
+	const contexts = [hostCtx, webviewCtx, chatCtx];
 	if (watch) {
 		await Promise.all(contexts.map((c) => c.watch()));
 		watchTailwind();
