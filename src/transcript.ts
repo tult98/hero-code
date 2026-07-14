@@ -157,6 +157,38 @@ function toolResultText(content: unknown): string {
 }
 
 /**
+ * The model id (e.g. `claude-opus-4-8`) of the most recent assistant turn on
+ * disk, or undefined. Used to seed a resumed session's footer immediately: the
+ * live SDK stream only reports the model once the first turn runs, so without
+ * this the model reads as blank until you send a message.
+ */
+export function lastAssistantModel(filePath: string): string | undefined {
+  let content: string
+  try {
+    content = fs.readFileSync(filePath, 'utf8')
+  } catch {
+    return undefined
+  }
+  let model: string | undefined
+  for (const line of content.split('\n')) {
+    if (!line.trim()) {
+      continue
+    }
+    let entry: RawEntry
+    try {
+      entry = JSON.parse(line) as RawEntry
+    } catch {
+      continue
+    }
+    const m = entry.type === 'assistant' ? (entry.message as { model?: string } | undefined)?.model : undefined
+    if (m) {
+      model = m
+    }
+  }
+  return model
+}
+
+/**
  * Parse a session `.jsonl` into an ordered list of chat messages for display
  * when opening an existing (idle) session in the GUI chat. This is a fuller
  * read than `parseSession` (which only extracts a title): it emits user text,

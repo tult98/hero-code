@@ -92,6 +92,9 @@ export class ChatView implements vscode.WebviewViewProvider {
       case 'interrupt':
         manager.interrupt(msg.sessionId)
         return
+      case 'cycleMode':
+        manager.cycleMode(msg.sessionId)
+        return
     }
   }
 
@@ -112,6 +115,7 @@ export class ChatView implements vscode.WebviewViewProvider {
       messages: snap.messages,
       status: snap.status,
       permission: snap.permission,
+      meta: snap.meta,
     })
   }
 

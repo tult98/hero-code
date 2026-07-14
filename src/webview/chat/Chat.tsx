@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChatMessage, ChatOutbound, ChatStatus, PermissionRequest } from '../../chat/types.js'
+import type { ChatMessage, ChatMeta, ChatOutbound, ChatStatus, PermissionRequest } from '../../chat/types.js'
 import { vscode } from './vscode-api.js'
 import { Message } from './Message.js'
 
@@ -22,12 +22,36 @@ const SUGGESTIONS = [
   { icon: 'git-commit', text: 'Write a commit message' },
 ]
 
+/** Friendly permission-mode labels for the footer. */
+const MODE_LABEL: Record<string, string> = {
+  default: 'default',
+  acceptEdits: 'accept edits',
+  plan: 'plan mode',
+  auto: 'auto',
+  bypassPermissions: 'bypass',
+}
+
+/** `claude-opus-4-8` → `Opus 4.8`; falls back to the raw id, then a dash. */
+function modelLabel(raw?: string): string {
+  if (!raw) {
+    return '—'
+  }
+  const m = raw.match(/(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?/i)
+  if (m) {
+    const family = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase()
+    const version = m[3] ? `${m[2]}.${m[3]}` : m[2]
+    return `${family} ${version}`
+  }
+  return raw
+}
+
 export function Chat() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [title, setTitle] = useState('Claude Chat')
   const [status, setStatus] = useState<ChatStatus>('idle')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [permission, setPermission] = useState<PermissionRequest | null>(null)
+  const [meta, setMeta] = useState<ChatMeta>({})
   const [input, setInput] = useState('')
   const [showThinking, setShowThinking] = useState(true)
   const [scrolledUp, setScrolledUp] = useState(false)
@@ -43,6 +67,10 @@ export function Chat() {
           setStatus(msg.status)
           setMessages(msg.messages)
           setPermission(msg.permission ?? null)
+          setMeta(msg.meta ?? {})
+          break
+        case 'meta':
+          setMeta(msg.meta)
           break
         case 'append':
           setMessages((prev) => [...prev, msg.message])
@@ -223,6 +251,12 @@ export function Chat() {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 send()
+              } else if (e.key === 'Tab' && e.shiftKey) {
+                // Cycle the live session's permission mode, like Claude Code.
+                e.preventDefault()
+                if (sessionId) {
+                  vscode.postMessage({ type: 'cycleMode', sessionId })
+                }
               }
             }}
           />
@@ -245,18 +279,20 @@ export function Chat() {
           </div>
         </div>
 
-        {/* Meta footer — placeholder values, not yet tracked in the chat session model. */}
+        {/* Meta footer — live per-session facts from the session's SDK stream. */}
         <div className='flex items-center gap-3 mt-1.5 px-0.5 text-[10.5px] text-vs-desc flex-wrap'>
-          <span className='flex items-center gap-1'><span className='codicon codicon-chip text-[11px]' />Opus 4.8</span>
-          <span className='flex items-center gap-1'><span className='codicon codicon-shield text-[11px]' />plan mode</span>
-          <span className='flex items-center gap-1'><span className='codicon codicon-git-branch text-[11px]' />main</span>
+          <span className='flex items-center gap-1' title='Model'><span className='codicon codicon-chip text-[11px]' />{modelLabel(meta.model)}</span>
+          <span className='flex items-center gap-1' title='Permission mode · Shift+Tab to cycle'><span className='codicon codicon-shield text-[11px]' />{MODE_LABEL[meta.permissionMode ?? ''] ?? meta.permissionMode ?? '—'}</span>
+          <span className='flex items-center gap-1' title='Git branch'><span className='codicon codicon-git-branch text-[11px]' />{meta.branch ?? '—'}</span>
           <span className='flex-1' />
-          <span className='flex items-center gap-1.5' title='Context window used'>
-            <span className='relative inline-block w-8 h-1 rounded overflow-hidden bg-(--vscode-scrollbarSlider-background)'>
-              <span className='absolute inset-y-0 left-0 w-[14%] rounded bg-vs-green' />
+          {meta.contextPercent != null && (
+            <span className='flex items-center gap-1.5' title='Context window used'>
+              <span className='relative inline-block w-8 h-1 rounded overflow-hidden bg-(--vscode-scrollbarSlider-background)'>
+                <span className='absolute inset-y-0 left-0 rounded bg-vs-green' style={{ width: `${Math.round(meta.contextPercent)}%` }} />
+              </span>
+              {Math.round(meta.contextPercent)}%
             </span>
-            14%
-          </span>
+          )}
         </div>
 
         {/* Keyboard hints */}

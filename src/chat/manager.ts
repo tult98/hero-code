@@ -1,8 +1,10 @@
 import * as os from 'os'
 import * as path from 'path'
+import * as fs from 'fs'
+import { execFileSync } from 'child_process'
 import { randomUUID } from 'crypto'
-import type { ChatMessage, ChatOutbound, ChatStatus, ChatToolUseBlock, PermissionRequest } from './types.js'
-import { describeTool, encodeProjectPath, parseTranscriptMessages } from '../transcript.js'
+import type { ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, PermissionRequest } from './types.js'
+import { describeTool, encodeProjectPath, lastAssistantModel, parseTranscriptMessages } from '../transcript.js'
 import type { ToolInput } from '../types.js'
 
 // Minimal local shapes for the Agent SDK. We deliberately avoid importing the
@@ -22,10 +24,22 @@ type SdkOptions = {
   resume?: string
   canUseTool?: (toolName: string, input: Record<string, unknown>, opts: SdkPermissionInfo) => Promise<SdkPermissionResult>
 }
-type SdkMessage = { type: string; subtype?: string; session_id?: string; uuid?: string; message?: { content?: unknown } }
+type SdkMessage = {
+  type: string
+  subtype?: string
+  session_id?: string
+  uuid?: string
+  /** system/init and system/status carry these at the top level. */
+  model?: string
+  permissionMode?: string
+  message?: { content?: unknown; model?: string; usage?: unknown }
+}
+type SdkContextUsage = { percentage?: number; model?: string }
 interface SdkQuery extends AsyncIterable<SdkMessage> {
   interrupt(): Promise<unknown>
   close(): void
+  setPermissionMode(mode: string): Promise<void>
+  getContextUsage(): Promise<SdkContextUsage>
 }
 type SdkModule = { query: (params: { prompt: string | AsyncIterable<SdkUserMessage>; options?: SdkOptions }) => SdkQuery }
 
@@ -104,6 +118,15 @@ interface ChatSession {
   queue: PushQueue<SdkUserMessage>
   query?: SdkQuery
   pending: Map<string, PendingPermission>
+  // --- live footer facts (see ChatMeta) ---
+  /** Raw model id from the SDK, e.g. `claude-opus-4-8`. */
+  model?: string
+  /** Current permission mode; tracked so Shift+Tab can cycle and resume honors it. */
+  permissionMode: string
+  /** Git branch of `cwd`, computed once at start. */
+  branch?: string
+  /** Percent of context window used (0–100), refreshed each turn. */
+  contextPercent?: number
 }
 
 /**
@@ -122,13 +145,13 @@ export class ChatSessionManager {
   }
 
   /** Snapshot for hydrating the panel when a session becomes active. */
-  snapshot(id: string): { title: string; messages: ChatMessage[]; status: ChatStatus; permission?: PermissionRequest } | undefined {
+  snapshot(id: string): { title: string; messages: ChatMessage[]; status: ChatStatus; permission?: PermissionRequest; meta: ChatMeta } | undefined {
     const session = this.sessions.get(id)
     if (!session) {
       return undefined
     }
     const permission = [...session.pending.values()][0]?.request
-    return { title: this.titleOf(session), messages: session.messages, status: session.status, permission }
+    return { title: this.titleOf(session), messages: session.messages, status: session.status, permission, meta: this.metaOf(session) }
   }
 
   /**
@@ -147,6 +170,8 @@ export class ChatSessionManager {
       toolCards: new Map(),
       queue: new PushQueue<SdkUserMessage>(),
       pending: new Map(),
+      permissionMode: 'default',
+      branch: gitBranch(cwd),
     }
     this.sessions.set(id, session)
     session.query = query({
@@ -173,6 +198,11 @@ export class ChatSessionManager {
       toolCards: new Map(),
       queue: new PushQueue<SdkUserMessage>(),
       pending: new Map(),
+      permissionMode: 'default',
+      branch: gitBranch(cwd),
+      // Live model isn't reported until the first turn — seed from history so the
+      // footer shows it right away on resume.
+      model: lastAssistantModel(file),
     }
     // Index history tool cards so later live tool_results can attach to them.
     for (const message of session.messages) {
@@ -262,7 +292,7 @@ export class ChatSessionManager {
   private optionsFor(session: ChatSession): SdkOptions {
     return {
       cwd: session.cwd,
-      permissionMode: 'default',
+      permissionMode: session.permissionMode,
       // Surface every tool prompt to the chat UI as Approve/Deny.
       canUseTool: (toolName, input, opts) => this.onPermission(session, toolName, input, opts),
     } as SdkOptions
@@ -281,11 +311,30 @@ export class ChatSessionManager {
 
   private handle(session: ChatSession, msg: SdkMessage): void {
     switch (msg.type) {
-      case 'system':
-        // Session id is assigned up front (create) or known (resume); the init
-        // message needs no handling.
+      case 'system': {
+        // init/status messages carry the live model + permission mode.
+        let changed = false
+        if (msg.model && msg.model !== session.model) {
+          session.model = msg.model
+          changed = true
+        }
+        if (msg.permissionMode && msg.permissionMode !== session.permissionMode) {
+          session.permissionMode = msg.permissionMode
+          changed = true
+        }
+        if (changed) {
+          this.emitMeta(session)
+        }
+        if (msg.subtype === 'init') {
+          void this.refreshContext(session)
+        }
         return
+      }
       case 'assistant': {
+        if (msg.message?.model && msg.message.model !== session.model) {
+          session.model = msg.message.model
+          this.emitMeta(session)
+        }
         const message = this.renderAssistant(session, msg)
         if (message.blocks.length) {
           session.messages.push(message)
@@ -302,11 +351,78 @@ export class ChatSessionManager {
       }
       case 'result': {
         this.setStatus(session, msg.subtype === 'success' ? 'idle' : 'error')
+        // A turn just ended → context grew; refresh the footer's usage bar.
+        void this.refreshContext(session)
         return
       }
       default:
         return
     }
+  }
+
+  /** Assemble the composer footer's live facts. */
+  private metaOf(session: ChatSession): ChatMeta {
+    return {
+      model: session.model,
+      permissionMode: session.permissionMode,
+      branch: session.branch,
+      contextPercent: session.contextPercent,
+    }
+  }
+
+  private emitMeta(session: ChatSession): void {
+    this.emit({ type: 'meta', sessionId: session.id, meta: this.metaOf(session) })
+  }
+
+  /**
+   * Ask the live session for its exact context usage (the same figure Claude
+   * Code's own context bar shows) and update the footer if it moved. Guarded so
+   * an older/slow CLI without the control request never breaks the composer.
+   */
+  private async refreshContext(session: ChatSession): Promise<void> {
+    const query = session.query
+    if (!query) {
+      return
+    }
+    try {
+      const usage = await query.getContextUsage()
+      let changed = false
+      if (typeof usage.percentage === 'number') {
+        // SDK reports 0–100; tolerate a 0–1 fraction defensively.
+        const pct = usage.percentage <= 1 ? usage.percentage * 100 : usage.percentage
+        const rounded = Math.max(0, Math.min(100, Math.round(pct)))
+        if (rounded !== session.contextPercent) {
+          session.contextPercent = rounded
+          changed = true
+        }
+      }
+      if (usage.model && usage.model !== session.model) {
+        session.model = usage.model
+        changed = true
+      }
+      if (changed) {
+        this.emitMeta(session)
+      }
+    } catch {
+      // No getContextUsage support (older CLI) — leave the footer as-is.
+    }
+  }
+
+  /**
+   * Cycle the live session's permission mode (Shift+Tab in the composer). Emits
+   * the new mode optimistically; the CLI echoes it back via a system/status
+   * message, which reconciles if the change was rejected.
+   */
+  cycleMode(id: string): void {
+    const session = this.sessions.get(id)
+    if (!session?.query) {
+      return
+    }
+    const order = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']
+    const next = order[(order.indexOf(session.permissionMode) + 1) % order.length]
+    session.permissionMode = next
+    this.emitMeta(session)
+    void session.query.setPermissionMode(next).catch(() => undefined)
   }
 
   private renderAssistant(session: ChatSession, msg: { uuid?: string; message?: { content?: unknown } }): ChatMessage {
@@ -406,6 +522,32 @@ export class ChatSessionManager {
     const firstUser = session.messages.find((m) => m.role === 'user')
     const text = firstUser?.blocks.find((b) => b.type === 'text') as { text: string } | undefined
     return text ? text.text.split('\n')[0].slice(0, 80) : 'New chat'
+  }
+}
+
+/**
+ * Current git branch of `cwd`. Reads `.git/HEAD` directly (cheap, no subprocess)
+ * and falls back to `git rev-parse` for subfolders/worktrees. Detached HEAD or a
+ * non-repo yields `HEAD` / `undefined` respectively.
+ */
+function gitBranch(cwd: string): string | undefined {
+  try {
+    const head = fs.readFileSync(path.join(cwd, '.git', 'HEAD'), 'utf8').trim()
+    const ref = head.match(/^ref:\s*refs\/heads\/(.+)$/)
+    if (ref) {
+      return ref[1]
+    }
+  } catch {
+    // .git/HEAD not directly here (subfolder, worktree, or not a repo).
+  }
+  try {
+    const out = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    return out.toString().trim() || undefined
+  } catch {
+    return undefined
   }
 }
 

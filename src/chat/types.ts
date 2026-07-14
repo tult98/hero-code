@@ -39,6 +39,23 @@ export interface ChatMessage {
   blocks: ChatBlock[]
 }
 
+/**
+ * Live per-session facts shown in the composer footer, pulled from the session's
+ * own SDK stream / control API (not the transcript). All optional: each fills in
+ * as the SDK reports it (model + mode from the init message, context % from
+ * `getContextUsage`, branch computed from the cwd).
+ */
+export interface ChatMeta {
+  /** Raw model id, e.g. `claude-opus-4-8`. */
+  model?: string
+  /** `default` | `acceptEdits` | `plan` | `auto` | `bypassPermissions`. */
+  permissionMode?: string
+  /** Git branch of the session cwd, e.g. `main`. */
+  branch?: string
+  /** Percent of the context window used, 0–100. */
+  contextPercent?: number
+}
+
 /** A parked tool-permission prompt awaiting the user's Approve/Deny. */
 export interface PermissionRequest {
   requestId: string
@@ -53,10 +70,11 @@ export interface PermissionRequest {
 
 /** Host → chat webview. */
 export type ChatOutbound =
-  | { type: 'hydrate'; sessionId: string; title: string; messages: ChatMessage[]; status: ChatStatus; permission?: PermissionRequest }
+  | { type: 'hydrate'; sessionId: string; title: string; messages: ChatMessage[]; status: ChatStatus; permission?: PermissionRequest; meta?: ChatMeta }
   | { type: 'append'; sessionId: string; message: ChatMessage }
   | { type: 'update'; sessionId: string; message: ChatMessage }
   | { type: 'status'; sessionId: string; status: ChatStatus }
+  | { type: 'meta'; sessionId: string; meta: ChatMeta }
   | { type: 'permission'; request: PermissionRequest }
   | { type: 'permissionResolved'; sessionId: string; requestId: string }
   | { type: 'mention'; sessionId: string; text: string }
@@ -67,3 +85,4 @@ export type ChatInbound =
   | { type: 'send'; sessionId: string; text: string }
   | { type: 'permissionResponse'; sessionId: string; requestId: string; allow: boolean }
   | { type: 'interrupt'; sessionId: string }
+  | { type: 'cycleMode'; sessionId: string }
