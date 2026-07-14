@@ -22,14 +22,28 @@ const SUGGESTIONS = [
   { icon: 'git-commit', text: 'Write a commit message' },
 ]
 
-/** Friendly permission-mode labels for the footer. */
-const MODE_LABEL: Record<string, string> = {
-  default: 'default',
-  acceptEdits: 'accept edits',
-  plan: 'plan mode',
-  auto: 'auto',
-  bypassPermissions: 'bypass',
+/**
+ * Per-mode styling for the footer's click-to-cycle permission-mode pill: friendly
+ * label, codicon, and the pill's text / background / border colors. Keyed by the
+ * SDK's `permissionMode`; `default` is shown as "manual".
+ */
+type ModeStyle = { label: string; icon: string; color: string; bg: string; border: string }
+const MODE_STYLE: Record<string, ModeStyle> = {
+  default: { label: 'manual', icon: 'codicon-debug-pause', color: '#b9b9b9', bg: '#ffffff10', border: '#4a4a4a' },
+  acceptEdits: { label: 'accept edits', icon: 'codicon-debug-continue', color: '#b18cf0', bg: '#b18cf01f', border: '#4c3d6b' },
+  plan: { label: 'plan', icon: 'codicon-debug-pause', color: '#5fd39a', bg: '#5fd39a1f', border: '#356048' },
+  auto: { label: 'auto', icon: 'codicon-debug-continue', color: '#e6a34a', bg: '#e6a34a1f', border: '#6a5228' },
+  bypassPermissions: { label: 'bypass permissions', icon: 'codicon-debug-continue', color: '#f0776a', bg: '#f0776a1f', border: '#6a3a34' },
 }
+
+/** Rotating hints shown in the composer's tip line (cycled while mounted). */
+const TIPS = [
+  'Tip: type @ to reference a file',
+  'Tip: / runs a slash command',
+  'Tip: Shift+Tab cycles the mode',
+  'Tip: drag an image in to attach it',
+  'Tip: Esc interrupts a running turn',
+]
 
 /** `claude-opus-4-8` → `Opus 4.8`; falls back to the raw id, then a dash. */
 function modelLabel(raw?: string): string {
@@ -45,6 +59,15 @@ function modelLabel(raw?: string): string {
   return raw
 }
 
+/**
+ * Context-window size label for the footer's usage readout. The SDK only reports a
+ * percentage, so the denominator is inferred from the model id: 1M-context models
+ * (id marked `1m`) show `1M`, everything else `200K`.
+ */
+function contextTotalLabel(model?: string): string {
+  return /1m/i.test(model ?? '') ? '1M' : '200K'
+}
+
 export function Chat() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [title, setTitle] = useState('Claude Chat')
@@ -55,7 +78,14 @@ export function Chat() {
   const [input, setInput] = useState('')
   const [showThinking, setShowThinking] = useState(true)
   const [scrolledUp, setScrolledUp] = useState(false)
+  const [tipIdx, setTipIdx] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Cycle the composer's hint line while mounted.
+  useEffect(() => {
+    const id = setInterval(() => setTipIdx((i) => (i + 1) % TIPS.length), 12000)
+    return () => clearInterval(id)
+  }, [])
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<ChatOutbound>) => {
@@ -240,11 +270,11 @@ export function Chat() {
         )}
 
         {/* Input card */}
-        <div className='flex flex-col gap-2 rounded-xl border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-2.5 py-2 focus-within:border-vs-accent'>
+        <div className='flex flex-col gap-[7px] rounded-[11px] border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-2.5 py-2 focus-within:border-vs-accent'>
           <textarea
-            className='w-full resize-none bg-transparent outline-none text-sm leading-snug text-(--vscode-input-foreground) placeholder:text-vs-desc'
+            className='w-full resize-none bg-transparent outline-none text-sm leading-[1.45] min-h-[38px] text-(--vscode-input-foreground) placeholder:text-vs-desc'
             rows={2}
-            placeholder={messages.length === 0 ? 'Send a message to start…' : 'Reply to Claude…   @ files   / commands'}
+            placeholder={messages.length === 0 ? 'Send a message to start…' : 'Reply to Claude…'}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -257,22 +287,27 @@ export function Chat() {
                 if (sessionId) {
                   vscode.postMessage({ type: 'cycleMode', sessionId })
                 }
+              } else if (e.key === 'Escape' && busy) {
+                // Esc interrupts a running turn.
+                e.preventDefault()
+                interrupt()
               }
             }}
           />
-          <div className='flex items-center gap-0.5'>
-            <span className='codicon codicon-add text-base text-vs-desc cursor-pointer rounded p-1 hover:text-vs-fg hover:bg-vs-hover-bg' title='Attach image or file' />
-            <span className='codicon codicon-mention text-base text-vs-desc cursor-pointer rounded p-1 hover:text-vs-fg hover:bg-vs-hover-bg' title='Mention a file' />
-            <span className='codicon codicon-symbol-operator text-base text-vs-desc cursor-pointer rounded p-1 hover:text-vs-fg hover:bg-vs-hover-bg' title='Slash command' />
-            <span className='flex-1' />
+          <div className='flex items-center gap-2'>
+            {/* Rotating hint — replaces the old (non-functional) attach/mention/slash icons. */}
+            <span className='flex-1 min-w-0 flex items-center gap-1.5 overflow-hidden text-[10.5px] text-vs-desc'>
+              <span className='codicon codicon-lightbulb shrink-0' style={{ fontSize: '12px' }} />
+              <span className='truncate'>{TIPS[tipIdx]}</span>
+            </span>
             {busy ? (
-              <button className='inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-semibold bg-(--vscode-button-secondaryBackground) text-(--vscode-button-secondaryForeground) hover:opacity-90' title='Interrupt' onClick={interrupt}>
-                <span className='codicon codicon-debug-stop' />
+              <button className='inline-flex items-center gap-1.5 rounded-lg border border-[#6a3a3a] px-3.5 py-1.5 text-xs font-bold text-[#f0a8a2] hover:bg-[#2a1a1a] hover:border-[#f14c4c]' title='Interrupt' onClick={interrupt}>
+                <span className='codicon codicon-debug-stop' style={{ fontSize: '13px' }} />
                 Stop
               </button>
             ) : (
-              <button className='inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-semibold bg-vs-accent text-black hover:opacity-90 disabled:opacity-50' title='Send' disabled={!input.trim()} onClick={send}>
-                <span className='codicon codicon-send' />
+              <button className='inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold bg-vs-accent text-[#1a1a1a] hover:bg-[#e08862] disabled:opacity-50' title='Send' disabled={!input.trim()} onClick={send}>
+                <span className='codicon codicon-send' style={{ fontSize: '13px' }} />
                 Send
               </button>
             )}
@@ -280,26 +315,50 @@ export function Chat() {
         </div>
 
         {/* Meta footer — live per-session facts from the session's SDK stream. */}
-        <div className='flex items-center gap-3 mt-1.5 px-0.5 text-[10.5px] text-vs-desc flex-wrap'>
-          <span className='flex items-center gap-1' title='Model'><span className='codicon codicon-chip text-[11px]' />{modelLabel(meta.model)}</span>
-          <span className='flex items-center gap-1' title='Permission mode · Shift+Tab to cycle'><span className='codicon codicon-shield text-[11px]' />{MODE_LABEL[meta.permissionMode ?? ''] ?? meta.permissionMode ?? '—'}</span>
-          <span className='flex items-center gap-1' title='Git branch'><span className='codicon codicon-git-branch text-[11px]' />{meta.branch ?? '—'}</span>
-          <span className='flex-1' />
-          {meta.contextPercent != null && (
-            <span className='flex items-center gap-1.5' title='Context window used'>
-              <span className='relative inline-block w-8 h-1 rounded overflow-hidden bg-(--vscode-scrollbarSlider-background)'>
-                <span className='absolute inset-y-0 left-0 rounded bg-vs-green' style={{ width: `${Math.round(meta.contextPercent)}%` }} />
+        <div className='flex items-center gap-2.5 mt-1.5 px-0.5 text-[10.5px] text-vs-desc flex-wrap'>
+          <span className='flex items-center gap-1.5 text-[#c4b3e0]' title='Model'>
+            <span className='codicon codicon-sparkle text-[#a78bcf]' style={{ fontSize: '12px' }} />
+            {modelLabel(meta.model)}
+          </span>
+          {(() => {
+            const mode = MODE_STYLE[meta.permissionMode ?? ''] ?? MODE_STYLE.default
+            return (
+              <span
+                className='flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-bold cursor-pointer'
+                style={{ color: mode.color, background: mode.bg, borderColor: mode.border }}
+                title='Permission mode · Shift+Tab to cycle'
+                onClick={() => sessionId && vscode.postMessage({ type: 'cycleMode', sessionId })}
+              >
+                <span className={`codicon ${mode.icon}`} style={{ fontSize: '11px' }} />
+                {mode.label}
               </span>
-              {Math.round(meta.contextPercent)}%
-            </span>
-          )}
+            )
+          })()}
+          <span className='flex-1' />
+          {meta.contextPercent != null &&
+            (() => {
+              const pct = Math.round(meta.contextPercent)
+              const color = pct >= 85 ? '#f14c4c' : pct >= 60 ? '#e2b53d' : '#89d185'
+              const offset = (37.7 * (1 - pct / 100)).toFixed(1)
+              return (
+                <span className='flex items-center gap-1.5' title={`${pct}% of context used`}>
+                  <svg width='16' height='16' viewBox='0 0 16 16' className='block' style={{ transform: 'rotate(-90deg)' }}>
+                    <circle cx='8' cy='8' r='6' fill='none' stroke='#3a3a3a' strokeWidth='2.4' />
+                    <circle cx='8' cy='8' r='6' fill='none' stroke={color} strokeWidth='2.4' strokeLinecap='round' strokeDasharray='37.7' strokeDashoffset={offset} />
+                  </svg>
+                  <span className='font-bold' style={{ color }}>
+                    {pct}%
+                  </span>
+                  <span>/ {contextTotalLabel(meta.model)}</span>
+                </span>
+              )
+            })()}
         </div>
 
-        {/* Keyboard hints */}
-        <div className='flex items-center gap-1.5 mt-1 px-0.5 text-[10.5px] text-vs-desc'>
-          <span>Shift+Tab to cycle</span>
-          <span className='opacity-60'>·</span>
-          <span>Shift+Enter for newline</span>
+        {/* Git branch — its own row, matching the design. */}
+        <div className='flex items-center gap-1 mt-1.5 px-0.5 min-w-0 text-[10.5px] text-vs-desc'>
+          <span className='codicon codicon-git-branch shrink-0' style={{ fontSize: '12px' }} />
+          <span className='truncate'>{meta.branch ?? '—'}</span>
         </div>
       </div>
     </div>
