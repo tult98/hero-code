@@ -13,7 +13,7 @@ export function activate(context: vscode.ExtensionContext) {
   // The GUI chat engine: one shared docked chat view, driven by SDK sessions.
   // The view is created first so the manager can emit events straight into it.
   const chatView = new ChatView(context.extensionUri)
-  const chatManager = new ChatSessionManager((event) => chatView.handleEvent(event))
+  const chatManager = new ChatSessionManager((event) => chatView.handleEvent(event), context.extensionUri.fsPath)
   chatView.attach(chatManager)
 
   const provider = new SessionsViewProvider(

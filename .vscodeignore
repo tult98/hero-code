@@ -4,12 +4,12 @@
 .serena/**
 media/claude.webp
 src/**
+# Nothing from node_modules ships. The one runtime-external package, the ESM-only
+# Claude Agent SDK, is vendored into dist/vendor by esbuild.js (see copyAgentSdk)
+# and loaded from there, so the whole tree — including the SDK's ~240MB bundled
+# CLI binary — stays out of the .vsix. The SDK drives the user's own installed
+# `claude` via pathToClaudeCodeExecutable, so its binary is not needed.
 node_modules/**
-# The Claude Agent SDK is loaded at runtime (external, not bundled), so it and
-# its platform-specific CLI binary must ship in the .vsix. npm installs only the
-# current platform's optional binary — a cross-platform release needs a
-# per-platform `vsce package --target` build.
-!node_modules/@anthropic-ai/**
 .gitignore
 .yarnrc
 esbuild.js

@@ -2,7 +2,7 @@
   "name": "hero-code",
   "displayName": "Hero Code",
   "description": "Manage multiple Claude Code sessions at once — realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -46,6 +46,11 @@
           "type": "boolean",
           "default": false,
           "description": "Show session debug info (launch id, live id, PID) in a hover tooltip on each session row."
+        },
+        "heroCode.claudePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the `claude` executable that the GUI chat window (Claude Agent SDK) should drive. Leave empty to auto-detect from common install locations and your shell's PATH."
         }
       }
     },

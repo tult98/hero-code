@@ -3,6 +3,8 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { execFileSync } from 'child_process'
 import { randomUUID } from 'crypto'
+import { pathToFileURL } from 'url'
+import * as vscode from 'vscode'
 import type { ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, PermissionRequest } from './types.js'
 import { describeTool, encodeProjectPath, lastAssistantModel, parseTranscriptMessages } from '../transcript.js'
 import type { ToolInput } from '../types.js'
@@ -23,6 +25,8 @@ type SdkOptions = {
   sessionId?: string
   resume?: string
   canUseTool?: (toolName: string, input: Record<string, unknown>, opts: SdkPermissionInfo) => Promise<SdkPermissionResult>
+  /** Absolute path to the `claude` executable the SDK should drive. */
+  pathToClaudeCodeExecutable?: string
 }
 type SdkMessage = {
   type: string
@@ -46,18 +50,59 @@ type SdkModule = { query: (params: { prompt: string | AsyncIterable<SdkUserMessa
 let sdkPromise: Promise<SdkModule> | undefined
 
 /**
- * Load the Claude Agent SDK. It is ESM-only and resolves its own bundled CLI via
- * `import.meta.url`, so it must be imported at runtime from `node_modules` rather
- * than bundled into our CJS host. The `new Function` wrapper hides the specifier
- * from esbuild so the real dynamic `import()` survives the CJS transform (esbuild
- * would otherwise rewrite it to `require()`, which fails on an ESM package).
+ * Load the Claude Agent SDK. It is ESM-only, so it can't be bundled into our CJS
+ * host; esbuild vendors it into `dist/vendor/` (see copyAgentSdk in esbuild.js)
+ * and we import it here by an ABSOLUTE file URL built from the extension's install
+ * path. A bare specifier would be resolved against `process.cwd()` (the extension
+ * host's cwd, not our folder) and fail with `ERR_MODULE_NOT_FOUND`. The
+ * `new Function` wrapper hides the `import()` from esbuild so the real dynamic
+ * import survives the CJS transform (esbuild would otherwise rewrite it to
+ * `require()`, which fails on an ESM package). `sdk.mjs`'s own `import.meta.url`
+ * still resolves to itself inside dist/vendor.
  */
-function loadSdk(): Promise<SdkModule> {
+function loadSdk(sdkEntry: string): Promise<SdkModule> {
   if (!sdkPromise) {
     const dynamicImport = new Function('s', 'return import(s)') as (s: string) => Promise<SdkModule>
-    sdkPromise = dynamicImport('@anthropic-ai/claude-agent-sdk')
+    sdkPromise = dynamicImport(pathToFileURL(sdkEntry).href)
   }
   return sdkPromise
+}
+
+/**
+ * Find the `claude` executable to hand the SDK. Returns an absolute path, or the
+ * raw `heroCode.claudePath` setting if the user configured one, or undefined.
+ */
+function findClaudeExecutable(): string | undefined {
+  const configured = vscode.workspace.getConfiguration('heroCode').get<string>('claudePath')?.trim()
+  if (configured) {
+    return configured
+  }
+
+  // Absolute install locations. The extension host's PATH is unreliable (GUI
+  // launches often lack `~/.local/bin`), so probe the well-known spots directly.
+  const home = os.homedir()
+  const candidates =
+    process.platform === 'win32'
+      ? [path.join(home, '.local', 'bin', 'claude.exe'), path.join(home, '.local', 'bin', 'claude.cmd')]
+      : [path.join(home, '.local', 'bin', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude']
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  // Last resort: ask a login shell to resolve `claude` on the user's real PATH.
+  try {
+    const shell = process.env.SHELL || '/bin/zsh'
+    const out = execFileSync(shell, ['-lic', 'command -v claude'], { encoding: 'utf8' }).trim()
+    if (out && path.isAbsolute(out) && fs.existsSync(out)) {
+      return out
+    }
+  } catch {
+    // No login shell / `claude` not on PATH — fall through.
+  }
+
+  return undefined
 }
 
 /** A minimal async-iterable queue we can push user turns into over time. */
@@ -138,7 +183,17 @@ interface ChatSession {
 export class ChatSessionManager {
   private sessions = new Map<string, ChatSession>()
 
-  constructor(private readonly emit: (event: ChatOutbound) => void) {}
+  /** Absolute path to the SDK's `sdk.mjs`, resolved from the extension root. */
+  private readonly sdkEntry: string
+  /** Memoized absolute path to the `claude` executable (see resolveClaudePath). */
+  private claudePathCache?: string
+
+  constructor(
+    private readonly emit: (event: ChatOutbound) => void,
+    extensionPath: string,
+  ) {
+    this.sdkEntry = path.join(extensionPath, 'dist', 'vendor', '@anthropic-ai', 'claude-agent-sdk', 'sdk.mjs')
+  }
 
   has(id: string): boolean {
     return this.sessions.has(id)
@@ -160,7 +215,7 @@ export class ChatSessionManager {
    * on it exactly as today and we never have to wait on the init message.
    */
   async create(cwd: string): Promise<string> {
-    const { query } = await loadSdk()
+    const { query } = await loadSdk(this.sdkEntry)
     const id = randomUUID()
     const session: ChatSession = {
       id,
@@ -188,7 +243,7 @@ export class ChatSessionManager {
     if (existing) {
       return existing.id
     }
-    const { query } = await loadSdk()
+    const { query } = await loadSdk(this.sdkEntry)
     const file = path.join(os.homedir(), '.claude', 'projects', encodeProjectPath(cwd), `${id}.jsonl`)
     const session: ChatSession = {
       id,
@@ -295,7 +350,32 @@ export class ChatSessionManager {
       permissionMode: session.permissionMode,
       // Surface every tool prompt to the chat UI as Approve/Deny.
       canUseTool: (toolName, input, opts) => this.onPermission(session, toolName, input, opts),
+      // Drive the user's installed Claude CLI. We don't ship the SDK's own ~240MB
+      // bundled binary, so this must resolve to a real executable. Throws (→ a
+      // clear "Could not start chat session" error) if none is found.
+      pathToClaudeCodeExecutable: this.resolveClaudePath(),
     } as SdkOptions
+  }
+
+  /**
+   * Absolute path to the `claude` executable the Agent SDK should spawn.
+   * Resolution order: the `heroCode.claudePath` setting, then common install
+   * locations, then a login-shell PATH lookup (the extension host's own PATH
+   * often omits `~/.local/bin` when VS Code is launched from the GUI). Memoized;
+   * throws a user-facing error if nothing resolves.
+   */
+  private resolveClaudePath(): string {
+    if (this.claudePathCache) {
+      return this.claudePathCache
+    }
+    const found = findClaudeExecutable()
+    if (!found) {
+      throw new Error(
+        'Could not locate the `claude` executable. Set `heroCode.claudePath` to its absolute path.',
+      )
+    }
+    this.claudePathCache = found
+    return found
   }
 
   /** Drive one session's message stream into the chat log + panel events. */

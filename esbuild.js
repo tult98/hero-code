@@ -44,6 +44,24 @@ function copyCodicons() {
 }
 
 /**
+ * Vendor the Claude Agent SDK into `dist/vendor/` so the chat window can load it
+ * at runtime. The SDK is ESM-only (can't be bundled into our CJS host) and vsce's
+ * node_modules handling makes shipping a single scoped package from node_modules
+ * unreliable, so we copy the package's own files into `dist/` — which already
+ * ships — and import from there (see src/chat/manager.ts). We deliberately copy
+ * ONLY this package, not its ~240MB sibling `claude-agent-sdk-<platform>` CLI
+ * binary: the SDK drives the user's installed `claude` via
+ * `pathToClaudeCodeExecutable`, so the bundled binary is never needed.
+ */
+function copyAgentSdk() {
+	const src = path.join(__dirname, 'node_modules', '@anthropic-ai', 'claude-agent-sdk');
+	const dest = path.join(__dirname, 'dist', 'vendor', '@anthropic-ai', 'claude-agent-sdk');
+	fs.rmSync(dest, { recursive: true, force: true });
+	fs.mkdirSync(path.dirname(dest), { recursive: true });
+	fs.cpSync(src, dest, { recursive: true });
+}
+
+/**
  * @type {import('esbuild').Plugin}
  */
 const esbuildProblemMatcherPlugin = {
@@ -77,9 +95,9 @@ async function main() {
 		platform: 'node',
 		outfile: 'dist/extension.js',
 		// `vscode` is provided by the runtime. The Claude Agent SDK is an ESM-only
-		// package that resolves its own bundled CLI via `import.meta.url`, so it must
-		// stay an external module loaded from `node_modules` at runtime (via a dynamic
-		// `import()`) rather than being bundled into this CJS output.
+		// package, so it can't be bundled into this CJS output; it is vendored into
+		// `dist/vendor/` (see copyAgentSdk) and loaded at runtime via a dynamic
+		// `import()` of its absolute path.
 		external: ['vscode', '@anthropic-ai/claude-agent-sdk'],
 		logLevel: 'silent',
 		plugins: [esbuildProblemMatcherPlugin],
@@ -111,6 +129,9 @@ async function main() {
 	]);
 
 	const contexts = [hostCtx, webviewCtx, chatCtx];
+	// Vendor the ESM-only Agent SDK into dist/ once (it's static — no need to
+	// re-copy on watch rebuilds).
+	copyAgentSdk();
 	if (watch) {
 		await Promise.all(contexts.map((c) => c.watch()));
 		watchTailwind();
