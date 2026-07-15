@@ -28,7 +28,7 @@ export function CodeBlock({ language, code }: { language?: string; code: string 
           {copied ? 'Copied' : 'Copy'}
         </span>
       </div>
-      <pre className='overflow-x-auto px-2.5 py-2 text-[12px] leading-relaxed'>
+      <pre className='overflow-x-auto px-2.5 py-2 text-[11px] leading-relaxed'>
         <code className='font-mono whitespace-pre'>{code}</code>
       </pre>
     </div>

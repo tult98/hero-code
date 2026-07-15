@@ -68,6 +68,27 @@ export interface ChatImageAttachment {
   data: string
 }
 
+/**
+ * A workspace file match for the composer's `@` file-reference menu. `rel` is the
+ * path relative to the session cwd (inserted as `@<rel> `); `name` is its basename,
+ * shown as the primary label.
+ */
+export interface FileHit {
+  rel: string
+  name: string
+}
+
+/**
+ * An available skill / slash command for the composer's `/` menu, from the SDK's
+ * `supportedCommands()`. `name` has no leading slash; `argumentHint` is a usage hint
+ * like `<file>` (empty when the command takes no arguments).
+ */
+export interface CommandInfo {
+  name: string
+  description: string
+  argumentHint: string
+}
+
 /** A parked tool-permission prompt awaiting the user's Approve/Deny. */
 export interface PermissionRequest {
   requestId: string
@@ -90,11 +111,21 @@ export type ChatOutbound =
   | { type: 'permission'; request: PermissionRequest }
   | { type: 'permissionResolved'; sessionId: string; requestId: string }
   | { type: 'mention'; sessionId: string; text: string }
+  // Composer autocomplete results. `fileResults` is tagged with the originating
+  // `query` so the webview can drop stale/out-of-order responses.
+  | { type: 'fileResults'; sessionId: string; query: string; results: FileHit[] }
+  | { type: 'commands'; sessionId: string; commands: CommandInfo[] }
 
 /** Chat webview → host. */
 export type ChatInbound =
   | { type: 'ready' }
   | { type: 'send'; sessionId: string; text: string; images?: ChatImageAttachment[] }
+  // Run a raw shell command (composer `!` prefix). Runs in the session's shell +
+  // cwd; output is shown in the chat but not sent to Claude.
+  | { type: 'runCommand'; sessionId: string; command: string }
   | { type: 'permissionResponse'; sessionId: string; requestId: string; allow: boolean }
   | { type: 'interrupt'; sessionId: string }
   | { type: 'cycleMode'; sessionId: string }
+  // Composer autocomplete requests (`@` file search, `/` skills+commands).
+  | { type: 'searchFiles'; sessionId: string; query: string }
+  | { type: 'listCommands'; sessionId: string }

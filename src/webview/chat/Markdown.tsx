@@ -9,16 +9,16 @@ import { CodeBlock } from './CodeBlock.js'
  * task-lists, strikethrough) is enabled via remark-gfm.
  */
 const components: Components = {
-  h1: ({ children }) => <h1 className='mt-3 mb-1.5 text-[15px] font-bold text-vs-fg'>{children}</h1>,
-  h2: ({ children }) => <h2 className='mt-3 mb-1.5 text-[14px] font-bold text-vs-fg'>{children}</h2>,
-  h3: ({ children }) => <h3 className='mt-2.5 mb-1 text-[13px] font-bold text-vs-fg'>{children}</h3>,
-  h4: ({ children }) => <h4 className='mt-2.5 mb-1 text-[13px] font-semibold text-vs-fg'>{children}</h4>,
+  h1: ({ children }) => <h1 className='mt-3 mb-1.5 text-[14px] font-bold text-vs-fg'>{children}</h1>,
+  h2: ({ children }) => <h2 className='mt-3 mb-1.5 text-[13px] font-bold text-vs-fg'>{children}</h2>,
+  h3: ({ children }) => <h3 className='mt-2.5 mb-1 text-[12px] font-bold text-vs-fg'>{children}</h3>,
+  h4: ({ children }) => <h4 className='mt-2.5 mb-1 text-[12px] font-semibold text-vs-fg'>{children}</h4>,
   p: ({ children }) => <p className='my-1.5 first:mt-0 last:mb-0'>{children}</p>,
   ul: ({ children }) => <ul className='my-1.5 list-disc pl-5 flex flex-col gap-0.5'>{children}</ul>,
   ol: ({ children }) => <ol className='my-1.5 list-decimal pl-5 flex flex-col gap-0.5'>{children}</ol>,
   li: ({ children }) => <li className='marker:text-vs-desc'>{children}</li>,
   a: ({ children, href }) => (
-    <a href={href} target='_blank' rel='noreferrer' className='text-vs-accent hover:underline'>
+    <a href={href} target='_blank' rel='noreferrer' className='text-(--vscode-textLink-foreground,#3794ff) hover:text-(--vscode-textLink-activeForeground,#3794ff) hover:underline'>
       {children}
     </a>
   ),
@@ -29,7 +29,7 @@ const components: Components = {
   strong: ({ children }) => <strong className='font-semibold text-vs-fg'>{children}</strong>,
   table: ({ children }) => (
     <div className='my-2 overflow-x-auto'>
-      <table className='border-collapse text-[12px]'>{children}</table>
+      <table className='border-collapse text-[11px]'>{children}</table>
     </div>
   ),
   th: ({ children }) => (
@@ -46,14 +46,14 @@ const components: Components = {
       return <CodeBlock language={match?.[1]} code={text.replace(/\n$/, '')} />
     }
     return (
-      <code className='rounded bg-(--vscode-textCodeBlock-background) px-1.5 py-0.5 font-mono text-[12px]'>{children}</code>
+      <code className='rounded bg-(--vscode-textCodeBlock-background) px-1.5 py-0.5 font-mono text-[11px]'>{children}</code>
     )
   },
 }
 
 export function Markdown({ text }: { text: string }) {
   return (
-    <div className='text-sm leading-relaxed text-vs-fg break-words'>
+    <div className='text-[13px] leading-relaxed text-vs-fg break-words'>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {text}
       </ReactMarkdown>

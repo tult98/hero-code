@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
+import * as path from 'path'
 import type { ChatSessionManager } from './manager.js'
-import type { ChatInbound, ChatOutbound } from './types.js'
+import type { ChatInbound, ChatOutbound, FileHit } from './types.js'
 
 /**
  * The single, reusable GUI chat window, implemented as a `WebviewView` so it
@@ -89,6 +90,9 @@ export class ChatView implements vscode.WebviewViewProvider {
       case 'send':
         manager.send(msg.sessionId, msg.text, msg.images)
         return
+      case 'runCommand':
+        manager.runCommand(msg.sessionId, msg.command)
+        return
       case 'permissionResponse':
         manager.respondPermission(msg.requestId, msg.allow)
         return
@@ -98,6 +102,37 @@ export class ChatView implements vscode.WebviewViewProvider {
       case 'cycleMode':
         manager.cycleMode(msg.sessionId)
         return
+      case 'listCommands':
+        void this.sendCommands(msg.sessionId)
+        return
+      case 'searchFiles':
+        void this.sendFileResults(msg.sessionId, msg.query)
+        return
+    }
+  }
+
+  /** Answer the composer's `/` menu with the session's skills + slash commands. */
+  private async sendCommands(sessionId: string): Promise<void> {
+    if (!this.manager) {
+      return
+    }
+    const commands = await this.manager.listCommands(sessionId)
+    if (this.activeId === sessionId) {
+      this.post({ type: 'commands', sessionId, commands })
+    }
+  }
+
+  /** Answer the composer's `@` menu with ranked workspace files for `query`. */
+  private async sendFileResults(sessionId: string, query: string): Promise<void> {
+    const cwd = this.manager?.cwdOf(sessionId)
+    if (!cwd) {
+      return
+    }
+    const results = await searchWorkspaceFiles(cwd, query)
+    // Drop responses for a session that is no longer the active one; the webview
+    // additionally checks the `query` tag to ignore out-of-order results.
+    if (this.activeId === sessionId) {
+      this.post({ type: 'fileResults', sessionId, query, results })
     }
   }
 
@@ -150,6 +185,61 @@ export class ChatView implements vscode.WebviewViewProvider {
 </body>
 </html>`
   }
+}
+
+/**
+ * Rank workspace files under `cwd` for the composer's `@` menu. `findFiles`
+ * honours `files.exclude` / `search.exclude` / `.gitignore` and is scoped to the
+ * session folder via a `RelativePattern`; results are then fuzzily ordered by how
+ * well each basename/path matches `query`. An empty query returns the first files.
+ */
+async function searchWorkspaceFiles(cwd: string, query: string, limit = 50): Promise<FileHit[]> {
+  const pattern = new vscode.RelativePattern(cwd, '**/*')
+  const uris = await vscode.workspace.findFiles(pattern, undefined, 4000)
+  const q = query.toLowerCase()
+  const scored: { hit: FileHit; score: number }[] = []
+  for (const uri of uris) {
+    const rel = path.relative(cwd, uri.fsPath).split(path.sep).join('/')
+    if (!rel || rel.startsWith('..')) {
+      continue
+    }
+    const name = rel.slice(rel.lastIndexOf('/') + 1)
+    const score = scoreFileMatch(name.toLowerCase(), rel.toLowerCase(), q)
+    if (score < 0) {
+      continue
+    }
+    scored.push({ hit: { rel, name }, score })
+  }
+  scored.sort((a, b) => b.score - a.score || a.hit.rel.length - b.hit.rel.length)
+  return scored.slice(0, limit).map((s) => s.hit)
+}
+
+/** Match score for a file: basename-prefix > basename-substring > path-substring > fuzzy subsequence; -1 = no match. */
+function scoreFileMatch(name: string, rel: string, q: string): number {
+  if (q === '') {
+    return 0
+  }
+  if (name.startsWith(q)) {
+    return 4
+  }
+  if (name.includes(q)) {
+    return 3
+  }
+  if (rel.includes(q)) {
+    return 2
+  }
+  return isSubsequence(q, rel) ? 1 : -1
+}
+
+/** True if every char of `q` appears in `text` in order (fuzzy match). */
+function isSubsequence(q: string, text: string): boolean {
+  let i = 0
+  for (let j = 0; j < text.length && i < q.length; j++) {
+    if (text[j] === q[i]) {
+      i++
+    }
+  }
+  return i === q.length
 }
 
 /** Random nonce so the webview script satisfies the CSP. */

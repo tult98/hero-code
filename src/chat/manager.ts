@@ -1,11 +1,11 @@
 import * as os from 'os'
 import * as path from 'path'
 import * as fs from 'fs'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import * as vscode from 'vscode'
-import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, PermissionRequest } from './types.js'
+import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, PermissionRequest } from './types.js'
 import { describeTool, encodeProjectPath, lastAssistantModel, parseTranscriptMessages } from '../transcript.js'
 import type { ToolInput } from '../types.js'
 
@@ -42,11 +42,15 @@ type SdkMessage = {
   message?: { content?: unknown; model?: string; usage?: unknown }
 }
 type SdkContextUsage = { percentage?: number; model?: string }
+/** SDK `SlashCommand` — covers both built-in slash commands and skills. */
+type SdkSlashCommand = { name: string; description?: string; argumentHint?: string; aliases?: string[] }
 interface SdkQuery extends AsyncIterable<SdkMessage> {
   interrupt(): Promise<unknown>
   close(): void
   setPermissionMode(mode: string): Promise<void>
   getContextUsage(): Promise<SdkContextUsage>
+  /** Available skills + slash commands for the running session. */
+  supportedCommands(): Promise<SdkSlashCommand[]>
 }
 type SdkModule = { query: (params: { prompt: string | AsyncIterable<SdkUserMessage>; options?: SdkOptions }) => SdkQuery }
 
@@ -175,6 +179,8 @@ interface ChatSession {
   branch?: string
   /** Percent of context window used (0–100), refreshed each turn. */
   contextPercent?: number
+  /** Cached skills+slash commands (from the SDK), populated on first `/` menu open. */
+  commands?: CommandInfo[]
 }
 
 /**
@@ -210,6 +216,42 @@ export class ChatSessionManager {
     }
     const permission = [...session.pending.values()][0]?.request
     return { title: this.titleOf(session), messages: session.messages, status: session.status, permission, meta: this.metaOf(session) }
+  }
+
+  /** Working directory of a session (used to scope `@` file search). */
+  cwdOf(id: string): string | undefined {
+    return this.sessions.get(id)?.cwd
+  }
+
+  /**
+   * Available skills + slash commands for a session, for the composer's `/` menu.
+   * The first non-empty result is cached on the session; an empty result (SDK not
+   * yet initialized, or an older CLI without the control request) is not cached, so
+   * a later call retries once commands become available.
+   */
+  async listCommands(id: string): Promise<CommandInfo[]> {
+    const session = this.sessions.get(id)
+    if (!session?.query) {
+      return []
+    }
+    if (session.commands) {
+      return session.commands
+    }
+    try {
+      const raw = await session.query.supportedCommands()
+      const commands = raw.map((c) => ({
+        name: c.name,
+        description: c.description ?? '',
+        argumentHint: c.argumentHint ?? '',
+      }))
+      if (commands.length > 0) {
+        session.commands = commands
+      }
+      return commands
+    } catch {
+      // No supportedCommands support (older CLI) — no `/` menu, no error.
+      return []
+    }
   }
 
   /**
@@ -314,6 +356,88 @@ export class ChatSessionManager {
       message: { role: 'user', content },
       parent_tool_use_id: null,
     } as SdkUserMessage)
+  }
+
+  /**
+   * Run a raw shell command from the composer `!` prefix. Executes in the
+   * session's login shell and cwd; the command echo + output render in the chat
+   * as a `Bash` tool card, but are NOT sent to Claude (the SDK query is untouched).
+   */
+  runCommand(id: string, command: string): void {
+    const session = this.sessions.get(id)
+    const cmd = command.trim()
+    if (!session || !cmd) {
+      return
+    }
+
+    // Echo the command as a user message, as if the composer typed it.
+    const echo: ChatMessage = { id: randomUUID(), role: 'user', blocks: [{ type: 'text', text: `!${cmd}` }] }
+    session.messages.push(echo)
+    this.emit({ type: 'append', sessionId: id, message: echo })
+
+    // A pending tool card we resolve once the command exits.
+    const card: ChatToolUseBlock = {
+      type: 'tool_use',
+      id: randomUUID(),
+      name: 'Bash',
+      label: cmd,
+      input: { command: cmd },
+      status: 'pending',
+    }
+    const message: ChatMessage = { id: randomUUID(), role: 'assistant', blocks: [card] }
+    session.messages.push(message)
+    session.toolCards.set(card.id, card)
+    this.emit({ type: 'append', sessionId: id, message })
+    // Show the composer's "Working…" state (and turn Send into Stop) while it runs.
+    this.setStatus(session, 'streaming')
+
+    // Login (`-l`) but NOT interactive: `-l` sources `.zprofile`/`.zshenv` so PATH is
+    // set, while skipping `.zshrc` — that avoids interactive-only rc noise (p10k /
+    // gitstatus init, `setopt monitor`) that has no TTY here. Trade-off: PATH tweaks
+    // that live only in `.zshrc` won't apply to `!` commands, by design (matches the
+    // SDK's own non-interactive Bash tool).
+    const shell = process.env.SHELL || 'zsh'
+    const child = spawn(shell, ['-lc', cmd], { cwd: session.cwd })
+
+    let output = ''
+    const MAX_CAPTURE = 100_000 // cap captured bytes to bound memory
+    const capture = (buf: Buffer): void => {
+      if (output.length < MAX_CAPTURE) {
+        output += buf.toString()
+      }
+    }
+    child.stdout?.on('data', capture)
+    child.stderr?.on('data', capture)
+
+    let settled = false
+    let timedOut = false
+    const finish = (status: 'done' | 'error', note?: string): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timer)
+      const clean = stripAnsi(output)
+      const body = note ? (clean ? `${clean}\n${note}` : note) : clean
+      card.result = (body.trim() || '(no output)').slice(0, 4000)
+      card.status = status
+      this.setStatus(session, status === 'error' ? 'error' : 'idle')
+      this.emit({ type: 'update', sessionId: id, message: this.messageOfCard(session, card) })
+    }
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, 30_000)
+
+    child.on('error', (err) => finish('error', `Failed to run command: ${err.message}`))
+    child.on('close', (code) => {
+      if (timedOut) {
+        finish('error', 'Command timed out after 30s and was killed.')
+      } else {
+        finish(code === 0 ? 'done' : 'error', code === 0 ? undefined : `Exited with code ${code ?? 'unknown'}`)
+      }
+    })
   }
 
   /** Resolve a parked tool-permission prompt with the user's choice. */
@@ -652,6 +776,13 @@ function gitBranch(cwd: string): string | undefined {
   } catch {
     return undefined
   }
+}
+
+// Match CSI/OSC ANSI escape sequences so shell output (colored `git status`,
+// error text, etc.) renders as clean text in the Bash card instead of raw `[31m…`.
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g
+function stripAnsi(s: string): string {
+  return s.replace(ANSI, '')
 }
 
 /** Flatten a tool_result `content` (string or `{type:'text',text}[]`) to text. */

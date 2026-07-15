@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, PermissionRequest } from '../../chat/types.js'
+import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, CommandInfo, FileHit, PermissionRequest } from '../../chat/types.js'
 import { vscode } from './vscode-api.js'
 import { Message } from './Message.js'
 
@@ -36,10 +36,14 @@ const MODE_STYLE: Record<string, ModeStyle> = {
   bypassPermissions: { label: 'bypass permissions', icon: 'codicon-debug-continue', color: '#f0776a', bg: '#f0776a1f', border: '#6a3a34' },
 }
 
+/** Accent for the composer's `!` shell mode (pink, echoing Claude Code's bash mode). */
+const SHELL_ACCENT = '#e0508f'
+
 /** Rotating hints shown in the composer's tip line (cycled while mounted). */
 const TIPS = [
   'Tip: type @ to reference a file',
   'Tip: / runs a slash command',
+  'Tip: ! runs a shell command',
   'Tip: Shift+Tab cycles the mode',
   'Tip: paste or drag an image to attach it',
   'Tip: Esc interrupts a running turn',
@@ -68,6 +72,66 @@ function contextTotalLabel(model?: string): string {
   return /1m/i.test(model ?? '') ? '1M' : '200K'
 }
 
+// ── Composer autocomplete (`@` files, `/` skills+commands) ──────────────────
+
+type MenuKind = 'file' | 'command'
+/** The open autocomplete: which trigger, the query after it, where the trigger starts, and the highlighted row. */
+interface MenuState {
+  kind: MenuKind
+  query: string
+  start: number
+  active: number
+}
+/** A rendered/acceptable autocomplete row. */
+interface MenuItem {
+  key: string
+  insert: string
+  primary: string
+  secondary: string
+  icon: string
+}
+
+/**
+ * Detect an active `@`/`/` trigger in `text` at the caret. A `/` menu opens only
+ * when the slash is the first char of the composer (like Claude Code); an `@` menu
+ * opens for the nearest `@` with no whitespace up to the caret, preceded by
+ * start-of-input or whitespace. Returns null when no trigger is active.
+ */
+function detectTrigger(text: string, caret: number): { kind: MenuKind; query: string; start: number } | null {
+  const before = text.slice(0, caret)
+  if (before.startsWith('/')) {
+    const rest = before.slice(1)
+    if (!/\s/.test(rest)) {
+      return { kind: 'command', query: rest, start: 0 }
+    }
+  }
+  const at = before.lastIndexOf('@')
+  if (at !== -1) {
+    const between = before.slice(at + 1)
+    const prev = at === 0 ? '' : before[at - 1]
+    if (!/\s/.test(between) && (at === 0 || /\s/.test(prev))) {
+      return { kind: 'file', query: between, start: at }
+    }
+  }
+  return null
+}
+
+/** Filter + rank commands for the `/` menu: name-prefix beats name-substring; empty query keeps all. */
+function filterCommands(cmds: CommandInfo[], query: string): CommandInfo[] {
+  const q = query.toLowerCase()
+  if (!q) {
+    return cmds
+  }
+  return cmds
+    .map((c) => {
+      const name = c.name.toLowerCase()
+      return { c, score: name.startsWith(q) ? 2 : name.includes(q) ? 1 : 0 }
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.c.name.length - b.c.name.length)
+    .map((x) => x.c)
+}
+
 export function Chat() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [title, setTitle] = useState('Claude Chat')
@@ -82,6 +146,13 @@ export function Chat() {
   const [showThinking, setShowThinking] = useState(true)
   const [scrolledUp, setScrolledUp] = useState(false)
   const [tipIdx, setTipIdx] = useState(0)
+  // Composer autocomplete: the open menu, cached `/` commands, and the latest
+  // `@` file results (tagged with their query so stale responses are ignored).
+  const [menu, setMenu] = useState<MenuState | null>(null)
+  const [commands, setCommands] = useState<CommandInfo[]>([])
+  const [fileHits, setFileHits] = useState<{ query: string; items: FileHit[] }>({ query: '', items: [] })
+  const commandsRequested = useRef(false)
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -102,6 +173,18 @@ export function Chat() {
           setMessages(msg.messages)
           setPermission(msg.permission ?? null)
           setMeta(msg.meta ?? {})
+          // A different session's commands/files no longer apply — reset the menu.
+          setMenu(null)
+          setCommands([])
+          commandsRequested.current = false
+          setFileHits({ query: '', items: [] })
+          break
+        case 'commands':
+          setCommands(msg.commands)
+          commandsRequested.current = false
+          break
+        case 'fileResults':
+          setFileHits({ query: msg.query, items: msg.results })
           break
         case 'meta':
           setMeta(msg.meta)
@@ -193,6 +276,57 @@ export function Chat() {
     })
   }
 
+  // Recompute the autocomplete menu from the text/caret, and (re)request its data:
+  // `/` commands once per session, `@` file searches debounced. Preserves the
+  // highlighted row while the trigger is unchanged so navigation isn't reset.
+  const syncMenu = (text: string, caret: number) => {
+    const t = detectTrigger(text, caret)
+    if (!t) {
+      setMenu(null)
+      return
+    }
+    setMenu((prev) =>
+      prev && prev.kind === t.kind && prev.query === t.query && prev.start === t.start
+        ? prev
+        : { ...t, active: 0 },
+    )
+    // Fetch commands lazily; retry if a prior fetch came back empty (e.g. the SDK
+    // wasn't initialized yet), but never with a request already in flight.
+    if (t.kind === 'command' && sessionId && commands.length === 0 && !commandsRequested.current) {
+      commandsRequested.current = true
+      vscode.postMessage({ type: 'listCommands', sessionId })
+    }
+    if (t.kind === 'file' && sessionId) {
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current)
+      }
+      const query = t.query
+      searchTimer.current = setTimeout(() => {
+        vscode.postMessage({ type: 'searchFiles', sessionId, query })
+      }, 120)
+    }
+  }
+
+  // Accept a menu row: replace the active `@…`/`/…` token with the completion.
+  const acceptMenu = (item: MenuItem) => {
+    if (!menu) {
+      return
+    }
+    const ta = textareaRef.current
+    const caret = ta?.selectionStart ?? input.length
+    const start = menu.start
+    setInput((prev) => prev.slice(0, start) + item.insert + prev.slice(caret))
+    setMenu(null)
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (el) {
+        const pos = start + item.insert.length
+        el.focus()
+        el.setSelectionRange(pos, pos)
+      }
+    })
+  }
+
   // Attach image files: drop an `[Image #N]` token at the caret for each (Claude
   // Code style), then load their bytes. Returns whether any images were taken.
   const ingestImages = (files: File[]): boolean => {
@@ -209,6 +343,13 @@ export function Chat() {
   const send = () => {
     const text = input.trim()
     if (!sessionId || (!text && images.length === 0)) {
+      return
+    }
+    // `!<command>` (first char, no images) runs a raw shell command instead of
+    // sending a prompt to Claude — mirrors Claude Code's `!` bash mode.
+    if (images.length === 0 && text.startsWith('!') && text.slice(1).trim()) {
+      vscode.postMessage({ type: 'runCommand', sessionId, command: text.slice(1).trim() })
+      setInput('')
       return
     }
     vscode.postMessage({ type: 'send', sessionId, text, images: images.length ? images : undefined })
@@ -232,6 +373,32 @@ export function Chat() {
 
   const busy = status === 'streaming' || status === 'awaiting-permission'
   const statusMeta = STATUS_META[status]
+  // `!` as the first non-space char puts the composer in shell mode: the next send
+  // runs a raw command instead of prompting Claude (see `send`). Recolor the card
+  // pink and swap the hint/Send affordances so this is obvious, à la Claude Code.
+  const shellMode = input.trimStart().startsWith('!')
+
+  // Derive the autocomplete rows for the open menu. File results are shown only
+  // when they match the current query (otherwise the menu is still "loading").
+  const menuItems: MenuItem[] = !menu
+    ? []
+    : menu.kind === 'command'
+      ? filterCommands(commands, menu.query).map((c) => ({
+          key: c.name,
+          insert: `/${c.name} `,
+          primary: `/${c.name}`,
+          secondary: c.description || c.argumentHint,
+          icon: 'codicon-terminal',
+        }))
+      : (fileHits.query === menu.query ? fileHits.items : []).map((h) => ({
+          key: h.rel,
+          insert: `@${h.rel} `,
+          primary: h.name,
+          secondary: h.rel,
+          icon: 'codicon-file',
+        }))
+  const menuLoading = !!menu && menu.kind === 'file' && fileHits.query !== menu.query
+  const menuActive = menu ? Math.min(menu.active, Math.max(0, menuItems.length - 1)) : 0
 
   if (!sessionId) {
     return (
@@ -325,14 +492,78 @@ export function Chat() {
         )}
 
         {/* Input card */}
-        <div className='flex flex-col gap-[7px] rounded-[11px] border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-2.5 py-2 focus-within:border-vs-accent'>
+        <div
+          className='relative flex flex-col gap-[7px] rounded-[11px] border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-2.5 py-2 focus-within:border-vs-accent'
+          style={shellMode ? { borderColor: SHELL_ACCENT, background: `color-mix(in srgb, ${SHELL_ACCENT} 7%, var(--vscode-input-background))` } : undefined}
+        >
+          {/* Autocomplete menu (`@` files / `/` skills+commands), anchored above the card. */}
+          {menu && (menuItems.length > 0 || menuLoading) && (
+            <div
+              className='absolute bottom-full left-0 right-0 mb-1.5 max-h-56 overflow-y-auto rounded-lg border py-1 shadow-lg z-20'
+              style={{
+                background: 'var(--vscode-dropdown-background, var(--vscode-input-background))',
+                borderColor: 'var(--vscode-dropdown-border, var(--vscode-input-border))',
+              }}
+            >
+              {menuLoading ? (
+                <div className='px-3 py-1.5 text-[11px] text-vs-desc'>Searching…</div>
+              ) : (
+                menuItems.map((item, i) => (
+                  <div
+                    key={item.key}
+                    role='button'
+                    ref={(el) => {
+                      if (i === menuActive) {
+                        el?.scrollIntoView({ block: 'nearest' })
+                      }
+                    }}
+                    // mousedown (not click) + preventDefault keeps textarea focus so onBlur doesn't
+                    // close the menu before the pick registers.
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      acceptMenu(item)
+                    }}
+                    onMouseEnter={() => setMenu((m) => (m ? { ...m, active: i } : m))}
+                    className='flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer'
+                    style={
+                      i === menuActive
+                        ? { background: 'var(--vscode-list-activeSelectionBackground)', color: 'var(--vscode-list-activeSelectionForeground)' }
+                        : undefined
+                    }
+                  >
+                    <span className={`codicon ${item.icon} shrink-0 text-vs-desc`} style={{ fontSize: '13px' }} />
+                    <span className='shrink-0 font-medium'>{item.primary}</span>
+                    {item.secondary && <span className='truncate text-vs-desc'>{item.secondary}</span>}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
-            className='w-full resize-none bg-transparent outline-none text-sm leading-[1.45] min-h-[38px] text-(--vscode-input-foreground) placeholder:text-vs-desc'
+            className='w-full resize-none bg-transparent outline-none text-[13px] leading-[1.45] min-h-[38px] text-(--vscode-input-foreground) placeholder:text-vs-desc'
             rows={2}
             placeholder={messages.length === 0 ? 'Send a message to start…' : 'Reply to Claude…'}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              let value = e.target.value
+              let caret = e.target.selectionStart ?? value.length
+              // Entering shell mode: a leading `!` auto-inserts a space so the command
+              // types after it (`! git`), mirroring the terminal's bash mode.
+              if (value.startsWith('!') && value[1] !== ' ' && !input.startsWith('!')) {
+                value = `! ${value.slice(1)}`
+                caret += 1
+                const ta = textareaRef.current
+                if (ta) {
+                  requestAnimationFrame(() => ta.setSelectionRange(caret, caret))
+                }
+              }
+              setInput(value)
+              syncMenu(value, caret)
+            }}
+            // Recompute on caret moves (arrows/clicks) so the menu tracks the token under the caret.
+            onSelect={(e) => syncMenu(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+            onBlur={() => setMenu(null)}
             onPaste={(e) => {
               const files = Array.from(e.clipboardData?.items ?? [])
                 .filter((it) => it.kind === 'file')
@@ -355,6 +586,31 @@ export function Chat() {
               }
             }}
             onKeyDown={(e) => {
+              // Autocomplete navigation takes precedence over send/cycle/interrupt.
+              if (menu) {
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setMenu(null)
+                  return
+                }
+                if (menuItems.length > 0) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    setMenu((m) => (m ? { ...m, active: (menuActive + 1) % menuItems.length } : m))
+                    return
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    setMenu((m) => (m ? { ...m, active: (menuActive - 1 + menuItems.length) % menuItems.length } : m))
+                    return
+                  }
+                  if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault()
+                    acceptMenu(menuItems[menuActive])
+                    return
+                  }
+                }
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 send()
@@ -372,15 +628,27 @@ export function Chat() {
             }}
           />
           <div className='flex items-center gap-2'>
-            {/* Rotating hint — replaces the old (non-functional) attach/mention/slash icons. */}
-            <span className='flex-1 min-w-0 flex items-center gap-1.5 overflow-hidden text-[10.5px] text-vs-desc'>
-              <span className='codicon codicon-lightbulb shrink-0' style={{ fontSize: '12px' }} />
-              <span className='truncate'>{TIPS[tipIdx]}</span>
-            </span>
+            {/* Shell-mode indicator, else a rotating hint (replaces the old icons). */}
+            {shellMode ? (
+              <span className='flex-1 min-w-0 flex items-center gap-1.5 overflow-hidden text-[10.5px] font-bold' style={{ color: SHELL_ACCENT }}>
+                <span className='codicon codicon-terminal shrink-0' style={{ fontSize: '12px' }} />
+                <span className='truncate'>! for shell mode</span>
+              </span>
+            ) : (
+              <span className='flex-1 min-w-0 flex items-center gap-1.5 overflow-hidden text-[10.5px] text-vs-desc'>
+                <span className='codicon codicon-lightbulb shrink-0' style={{ fontSize: '12px' }} />
+                <span className='truncate'>{TIPS[tipIdx]}</span>
+              </span>
+            )}
             {busy ? (
               <button className='inline-flex items-center gap-1.5 rounded-lg border border-[#6a3a3a] px-3.5 py-1.5 text-xs font-bold text-[#f0a8a2] hover:bg-[#2a1a1a] hover:border-[#f14c4c]' title='Interrupt' onClick={interrupt}>
                 <span className='codicon codicon-debug-stop' style={{ fontSize: '13px' }} />
                 Stop
+              </button>
+            ) : shellMode ? (
+              <button className='inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold text-[#1a1a1a] hover:brightness-110 disabled:opacity-50' style={{ background: SHELL_ACCENT }} title='Run shell command' disabled={!input.trim().slice(1).trim()} onClick={send}>
+                <span className='codicon codicon-terminal' style={{ fontSize: '13px' }} />
+                Run
               </button>
             ) : (
               <button className='inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold bg-vs-accent text-[#1a1a1a] hover:bg-[#e08862] disabled:opacity-50' title='Send' disabled={!input.trim() && images.length === 0} onClick={send}>
