@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChatMessage, ChatMeta, ChatOutbound, ChatStatus, PermissionRequest } from '../../chat/types.js'
+import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, PermissionRequest } from '../../chat/types.js'
 import { vscode } from './vscode-api.js'
 import { Message } from './Message.js'
 
@@ -41,7 +41,7 @@ const TIPS = [
   'Tip: type @ to reference a file',
   'Tip: / runs a slash command',
   'Tip: Shift+Tab cycles the mode',
-  'Tip: drag an image in to attach it',
+  'Tip: paste or drag an image to attach it',
   'Tip: Esc interrupts a running turn',
 ]
 
@@ -76,10 +76,14 @@ export function Chat() {
   const [permission, setPermission] = useState<PermissionRequest | null>(null)
   const [meta, setMeta] = useState<ChatMeta>({})
   const [input, setInput] = useState('')
+  // Pasted/dropped images, sent as base64 blocks on the next turn. Each is
+  // referenced by an `[Image #N]` token the caller inserted into the composer.
+  const [images, setImages] = useState<ChatImageAttachment[]>([])
   const [showThinking, setShowThinking] = useState(true)
   const [scrolledUp, setScrolledUp] = useState(false)
   const [tipIdx, setTipIdx] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Cycle the composer's hint line while mounted.
   useEffect(() => {
@@ -119,6 +123,15 @@ export function Chat() {
           break
         case 'mention':
           setInput((prev) => (prev ? `${prev}${msg.text}` : msg.text))
+          // Move focus into the composer so the user can keep typing after
+          // referencing code (Opt+Cmd+K), caret at the end of the input.
+          requestAnimationFrame(() => {
+            const ta = textareaRef.current
+            if (ta) {
+              ta.focus()
+              ta.setSelectionRange(ta.value.length, ta.value.length)
+            }
+          })
           break
       }
     }
@@ -152,13 +165,55 @@ export function Chat() {
     setScrolledUp(false)
   }
 
+  // Read an image File as a base64 attachment (strips the `data:<mime>;base64,` prefix).
+  const readAsAttachment = (file: File) =>
+    new Promise<ChatImageAttachment>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(reader.error)
+      reader.onload = () => {
+        const url = String(reader.result) // data:image/png;base64,XXXX
+        resolve({ mediaType: file.type || 'image/png', data: url.slice(url.indexOf(',') + 1) })
+      }
+      reader.readAsDataURL(file)
+    })
+
+  // Insert text at the composer's caret (replacing any selection), then restore
+  // focus with the caret just after the inserted snippet.
+  const insertAtCaret = (snippet: string) => {
+    const ta = textareaRef.current
+    const start = ta?.selectionStart ?? input.length
+    const end = ta?.selectionEnd ?? input.length
+    setInput((prev) => prev.slice(0, start) + snippet + prev.slice(end))
+    requestAnimationFrame(() => {
+      if (ta) {
+        const pos = start + snippet.length
+        ta.focus()
+        ta.setSelectionRange(pos, pos)
+      }
+    })
+  }
+
+  // Attach image files: drop an `[Image #N]` token at the caret for each (Claude
+  // Code style), then load their bytes. Returns whether any images were taken.
+  const ingestImages = (files: File[]): boolean => {
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'))
+    if (imageFiles.length === 0) {
+      return false
+    }
+    const base = images.length
+    insertAtCaret(imageFiles.map((_, i) => `[Image #${base + i + 1}]`).join(' ') + ' ')
+    void Promise.all(imageFiles.map(readAsAttachment)).then((loaded) => setImages((prev) => [...prev, ...loaded]))
+    return true
+  }
+
   const send = () => {
     const text = input.trim()
-    if (!text || !sessionId) {
+    if (!sessionId || (!text && images.length === 0)) {
       return
     }
-    vscode.postMessage({ type: 'send', sessionId, text })
+    vscode.postMessage({ type: 'send', sessionId, text, images: images.length ? images : undefined })
     setInput('')
+    setImages([])
   }
 
   const respond = (allow: boolean) => {
@@ -272,11 +327,33 @@ export function Chat() {
         {/* Input card */}
         <div className='flex flex-col gap-[7px] rounded-[11px] border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-2.5 py-2 focus-within:border-vs-accent'>
           <textarea
+            ref={textareaRef}
             className='w-full resize-none bg-transparent outline-none text-sm leading-[1.45] min-h-[38px] text-(--vscode-input-foreground) placeholder:text-vs-desc'
             rows={2}
             placeholder={messages.length === 0 ? 'Send a message to start…' : 'Reply to Claude…'}
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData?.items ?? [])
+                .filter((it) => it.kind === 'file')
+                .map((it) => it.getAsFile())
+                .filter((f): f is File => f != null)
+              if (files.some((f) => f.type.startsWith('image/')) && ingestImages(files)) {
+                e.preventDefault()
+              }
+            }}
+            onDragOver={(e) => {
+              if (Array.from(e.dataTransfer?.items ?? []).some((it) => it.kind === 'file')) {
+                e.preventDefault()
+              }
+            }}
+            onDrop={(e) => {
+              const files = Array.from(e.dataTransfer?.files ?? [])
+              if (files.some((f) => f.type.startsWith('image/'))) {
+                e.preventDefault()
+                ingestImages(files)
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -306,7 +383,7 @@ export function Chat() {
                 Stop
               </button>
             ) : (
-              <button className='inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold bg-vs-accent text-[#1a1a1a] hover:bg-[#e08862] disabled:opacity-50' title='Send' disabled={!input.trim()} onClick={send}>
+              <button className='inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold bg-vs-accent text-[#1a1a1a] hover:bg-[#e08862] disabled:opacity-50' title='Send' disabled={!input.trim() && images.length === 0} onClick={send}>
                 <span className='codicon codicon-send' style={{ fontSize: '13px' }} />
                 Send
               </button>

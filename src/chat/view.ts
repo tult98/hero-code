@@ -56,6 +56,9 @@ export class ChatView implements vscode.WebviewViewProvider {
   /** Insert an `@file` mention into the input if that session is showing. */
   mention(sessionId: string, text: string): void {
     if (this.view && this.activeId === sessionId) {
+      // Reveal + focus the view so the caret lands in the composer (the webview's
+      // `mention` handler focuses the textarea once the view has focus).
+      this.view.show(false)
       this.post({ type: 'mention', sessionId, text })
     }
   }
@@ -84,7 +87,7 @@ export class ChatView implements vscode.WebviewViewProvider {
         this.hydrate()
         return
       case 'send':
-        manager.send(msg.sessionId, msg.text)
+        manager.send(msg.sessionId, msg.text, msg.images)
         return
       case 'permissionResponse':
         manager.respondPermission(msg.requestId, msg.allow)

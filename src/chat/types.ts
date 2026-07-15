@@ -56,6 +56,18 @@ export interface ChatMeta {
   contextPercent?: number
 }
 
+/**
+ * A pasted/dropped image attached to a user turn. The `[Image #N]` token shown in
+ * the composer is plain text in the turn; the bytes travel here and are sent to
+ * the SDK as a base64 image content block.
+ */
+export interface ChatImageAttachment {
+  /** IANA media type, e.g. `image/png`. */
+  mediaType: string
+  /** Base64-encoded image bytes (no `data:` prefix). */
+  data: string
+}
+
 /** A parked tool-permission prompt awaiting the user's Approve/Deny. */
 export interface PermissionRequest {
   requestId: string
@@ -82,7 +94,7 @@ export type ChatOutbound =
 /** Chat webview → host. */
 export type ChatInbound =
   | { type: 'ready' }
-  | { type: 'send'; sessionId: string; text: string }
+  | { type: 'send'; sessionId: string; text: string; images?: ChatImageAttachment[] }
   | { type: 'permissionResponse'; sessionId: string; requestId: string; allow: boolean }
   | { type: 'interrupt'; sessionId: string }
   | { type: 'cycleMode'; sessionId: string }

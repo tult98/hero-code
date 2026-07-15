@@ -5,7 +5,7 @@ import { execFileSync } from 'child_process'
 import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import * as vscode from 'vscode'
-import type { ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, PermissionRequest } from './types.js'
+import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, PermissionRequest } from './types.js'
 import { describeTool, encodeProjectPath, lastAssistantModel, parseTranscriptMessages } from '../transcript.js'
 import type { ToolInput } from '../types.js'
 
@@ -13,7 +13,10 @@ import type { ToolInput } from '../types.js'
 // SDK's own types: it's an ESM-only package and type-importing it from this CJS
 // host requires import attributes the host tsconfig doesn't enable. We only use
 // a small, stable surface, so local shapes are simpler and sufficient.
-type SdkUserMessage = { type: 'user'; message: { role: 'user'; content: string }; parent_tool_use_id: null }
+type SdkContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+type SdkUserMessage = { type: 'user'; message: { role: 'user'; content: string | SdkContentBlock[] }; parent_tool_use_id: null }
 type SdkPermissionResult =
   | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
   | { behavior: 'deny'; message: string }
@@ -276,19 +279,39 @@ export class ChatSessionManager {
     return id
   }
 
-  /** Send a user turn. Appends the prompt to the log optimistically. */
-  send(id: string, text: string): void {
+  /**
+   * Send a user turn. Appends the prompt to the log optimistically. Any attached
+   * images ride along as base64 content blocks; the `[Image #N]` tokens the
+   * composer inserted are plain text in `text`, so the optimistic message renders
+   * them inline for free (no separate image block needed).
+   */
+  send(id: string, text: string, images?: ChatImageAttachment[]): void {
     const session = this.sessions.get(id)
-    if (!session || !text.trim()) {
+    if (!session || (!text.trim() && !images?.length)) {
       return
     }
     const message: ChatMessage = { id: randomUUID(), role: 'user', blocks: [{ type: 'text', text }] }
     session.messages.push(message)
     this.emit({ type: 'append', sessionId: id, message })
     this.setStatus(session, 'streaming')
+
+    // Plain string when there are no images (unchanged behavior); otherwise an
+    // Anthropic content-block array: the text first (when present), then one
+    // base64 image block per attachment.
+    let content: string | SdkContentBlock[] = text
+    if (images?.length) {
+      const blocks: SdkContentBlock[] = []
+      if (text.trim()) {
+        blocks.push({ type: 'text', text })
+      }
+      for (const img of images) {
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })
+      }
+      content = blocks
+    }
     session.queue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null,
     } as SdkUserMessage)
   }
