@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, CommandInfo, FileHit, PermissionRequest } from '../../chat/types.js'
+import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, CommandInfo, FileHit, ModelChoice, PermissionRequest } from '../../chat/types.js'
 import { vscode } from './vscode-api.js'
 import { Message } from './Message.js'
+import { ModelPanel, type ModelPanelStatus } from './ModelPanel.js'
 
 /**
  * Per-status header pill: label, a full literal Tailwind color token (so the
@@ -152,6 +153,14 @@ export function Chat() {
   const [commands, setCommands] = useState<CommandInfo[]>([])
   const [fileHits, setFileHits] = useState<{ query: string; items: FileHit[] }>({ query: '', items: [] })
   const commandsRequested = useRef(false)
+  // `/model` picker overlay: null when closed, else the latest catalog + state.
+  const [modelPanel, setModelPanel] = useState<{
+    status: ModelPanelStatus
+    models: ModelChoice[]
+    currentValue?: string
+    defaultValue?: string
+    error?: string
+  } | null>(null)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -178,10 +187,15 @@ export function Chat() {
           setCommands([])
           commandsRequested.current = false
           setFileHits({ query: '', items: [] })
+          setModelPanel(null)
           break
         case 'commands':
           setCommands(msg.commands)
           commandsRequested.current = false
+          break
+        case 'models':
+          // Ignore late catalog replies for a picker the user already closed.
+          setModelPanel((prev) => (prev ? { status: msg.status, models: msg.models, currentValue: msg.currentValue, defaultValue: msg.defaultValue, error: msg.error } : prev))
           break
         case 'fileResults':
           setFileHits({ query: msg.query, items: msg.results })
@@ -340,9 +354,30 @@ export function Chat() {
     return true
   }
 
+  // Open the `/model` picker over the chat view and request the catalog.
+  const openModelPanel = () => {
+    if (!sessionId) {
+      return
+    }
+    setModelPanel({ status: 'loading', models: [] })
+    vscode.postMessage({ type: 'listModels', sessionId })
+  }
+
+  // Close the picker and return focus to the composer.
+  const closeModelPanel = () => {
+    setModelPanel(null)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+
   const send = () => {
     const text = input.trim()
     if (!sessionId || (!text && images.length === 0)) {
+      return
+    }
+    // `/model` opens the native picker panel instead of sending a prompt.
+    if (images.length === 0 && text === '/model') {
+      setInput('')
+      openModelPanel()
       return
     }
     // `!<command>` (first char, no images) runs a raw shell command instead of
@@ -409,7 +444,29 @@ export function Chat() {
   }
 
   return (
-    <div className='flex flex-col h-full min-h-0'>
+    <div className='relative flex flex-col h-full min-h-0'>
+      {/* `/model` picker takes over the whole chat view. */}
+      {modelPanel && (
+        <div className='absolute inset-0 z-30'>
+          <ModelPanel
+            status={modelPanel.status}
+            models={modelPanel.models}
+            currentValue={modelPanel.currentValue}
+            defaultValue={modelPanel.defaultValue}
+            currentEffort={meta?.effort}
+            error={modelPanel.error}
+            onCommit={(value, effort, scope) => {
+              vscode.postMessage({ type: 'applyModel', sessionId, value, effort, scope })
+              closeModelPanel()
+            }}
+            onRefresh={() => {
+              setModelPanel((prev) => (prev ? { ...prev, status: 'loading' } : prev))
+              vscode.postMessage({ type: 'listModels', sessionId, refresh: true })
+            }}
+            onClose={closeModelPanel}
+          />
+        </div>
+      )}
       {/* HEADER */}
       <div className='h-9 shrink-0 flex items-center gap-2 px-3 border-b border-(--vscode-panel-border,transparent)'>
         <span className='codicon codicon-claude text-base text-vs-accent shrink-0' />
@@ -661,9 +718,14 @@ export function Chat() {
 
         {/* Meta footer — live per-session facts from the session's SDK stream. */}
         <div className='flex items-center gap-2.5 mt-1.5 px-0.5 text-[10.5px] text-vs-desc flex-wrap'>
-          <span className='flex items-center gap-1.5 text-[#c4b3e0]' title='Model'>
+          <span
+            className='flex items-center gap-1.5 text-[#c4b3e0] cursor-pointer'
+            title='Model · click to change (/model)'
+            onClick={openModelPanel}
+          >
             <span className='codicon codicon-sparkle text-[#a78bcf]' style={{ fontSize: '12px' }} />
             {modelLabel(meta.model)}
+            {meta.effort && <span className='text-vs-desc'>· {meta.effort}</span>}
           </span>
           {(() => {
             const mode = MODE_STYLE[meta.permissionMode ?? ''] ?? MODE_STYLE.default

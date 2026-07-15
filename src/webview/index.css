@@ -42,6 +42,12 @@
   50% { opacity: 0.3; }
 }
 
+/* `/model` panel: loading skeleton shimmer. */
+@keyframes mp-shim {
+  0% { background-position: -260px 0; }
+  100% { background-position: 260px 0; }
+}
+
 @layer base {
   html,
   body,

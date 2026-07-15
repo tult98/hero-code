@@ -51,6 +51,24 @@
           "type": "string",
           "default": "",
           "description": "Absolute path to the `claude` executable that the GUI chat window (Claude Agent SDK) should drive. Leave empty to auto-detect from common install locations and your shell's PATH."
+        },
+        "heroCode.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Default model for new GUI chat sessions, set via the `/model` panel's \"Set as default\". A model id or alias (e.g. `opus`, `sonnet`, `claude-opus-4-8`). Leave empty to use the CLI's own default."
+        },
+        "heroCode.defaultEffort": {
+          "type": "string",
+          "enum": [
+            "",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "",
+          "description": "Default reasoning effort for new GUI chat sessions, set via the `/model` panel. Leave empty to use the model's default."
         }
       }
     },

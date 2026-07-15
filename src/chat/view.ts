@@ -108,6 +108,16 @@ export class ChatView implements vscode.WebviewViewProvider {
       case 'searchFiles':
         void this.sendFileResults(msg.sessionId, msg.query)
         return
+      case 'listModels':
+        void this.sendModels(msg.sessionId, msg.refresh)
+        return
+      case 'applyModel':
+        if (msg.scope === 'default') {
+          void manager.setDefaultModel(msg.sessionId, msg.value, msg.effort)
+        } else {
+          manager.useModelForSession(msg.sessionId, msg.value, msg.effort)
+        }
+        return
     }
   }
 
@@ -119,6 +129,17 @@ export class ChatView implements vscode.WebviewViewProvider {
     const commands = await this.manager.listCommands(sessionId)
     if (this.activeId === sessionId) {
       this.post({ type: 'commands', sessionId, commands })
+    }
+  }
+
+  /** Answer the `/model` panel with the session's model catalog + current/default. */
+  private async sendModels(sessionId: string, refresh?: boolean): Promise<void> {
+    if (!this.manager) {
+      return
+    }
+    const result = await this.manager.listModels(sessionId, refresh)
+    if (this.activeId === sessionId) {
+      this.post({ type: 'models', sessionId, ...result })
     }
   }
 

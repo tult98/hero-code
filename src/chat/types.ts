@@ -54,6 +54,22 @@ export interface ChatMeta {
   branch?: string
   /** Percent of the context window used, 0–100. */
   contextPercent?: number
+  /** Current reasoning effort level (e.g. `high`), when set via the `/model` panel. */
+  effort?: string
+}
+
+/**
+ * One selectable model in the `/model` picker, derived from the SDK's
+ * `supportedModels()`. `value` is passed to `setModel`; `resolvedModel` is the
+ * canonical wire id used to match the session's live model to a row.
+ */
+export interface ModelChoice {
+  value: string
+  resolvedModel?: string
+  displayName: string
+  description: string
+  /** Effort levels this model supports (empty when it has none). */
+  effortLevels: string[]
 }
 
 /**
@@ -115,6 +131,9 @@ export type ChatOutbound =
   // `query` so the webview can drop stale/out-of-order responses.
   | { type: 'fileResults'; sessionId: string; query: string; results: FileHit[] }
   | { type: 'commands'; sessionId: string; commands: CommandInfo[] }
+  // `/model` picker catalog. `status` drives the panel's ready/empty/error views;
+  // `currentValue` marks the live session model, `defaultValue` the saved default.
+  | { type: 'models'; sessionId: string; status: 'ready' | 'empty' | 'error'; models: ModelChoice[]; currentValue?: string; defaultValue?: string; error?: string }
 
 /** Chat webview → host. */
 export type ChatInbound =
@@ -129,3 +148,7 @@ export type ChatInbound =
   // Composer autocomplete requests (`@` file search, `/` skills+commands).
   | { type: 'searchFiles'; sessionId: string; query: string }
   | { type: 'listCommands'; sessionId: string }
+  // `/model` picker: fetch the catalog (`refresh` bypasses the cache) and commit a
+  // choice as the new default (persisted, new sessions) or for this session only.
+  | { type: 'listModels'; sessionId: string; refresh?: boolean }
+  | { type: 'applyModel'; sessionId: string; value: string; effort?: string; scope: 'default' | 'session' }

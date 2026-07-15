@@ -5,7 +5,7 @@ import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import * as vscode from 'vscode'
-import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, PermissionRequest } from './types.js'
+import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, ModelChoice, PermissionRequest } from './types.js'
 import { describeTool, encodeProjectPath, lastAssistantModel, parseTranscriptMessages } from '../transcript.js'
 import type { ToolInput } from '../types.js'
 
@@ -24,6 +24,10 @@ type SdkPermissionInfo = { toolUseID?: string; requestId?: string; title?: strin
 type SdkOptions = {
   cwd: string
   permissionMode?: string
+  /** Model id/alias to start the session on (like `claude --model`). */
+  model?: string
+  /** Reasoning effort level to start the session on (`low`…`max`). */
+  effort?: string
   /** Pre-assign the session id for a new session (like `claude --session-id`). */
   sessionId?: string
   resume?: string
@@ -44,6 +48,15 @@ type SdkMessage = {
 type SdkContextUsage = { percentage?: number; model?: string }
 /** SDK `SlashCommand` — covers both built-in slash commands and skills. */
 type SdkSlashCommand = { name: string; description?: string; argumentHint?: string; aliases?: string[] }
+/** SDK `ModelInfo` — one selectable model in the `/model` catalog. */
+type SdkModelInfo = {
+  value: string
+  resolvedModel?: string
+  displayName: string
+  description: string
+  supportsEffort?: boolean
+  supportedEffortLevels?: string[]
+}
 interface SdkQuery extends AsyncIterable<SdkMessage> {
   interrupt(): Promise<unknown>
   close(): void
@@ -51,6 +64,12 @@ interface SdkQuery extends AsyncIterable<SdkMessage> {
   getContextUsage(): Promise<SdkContextUsage>
   /** Available skills + slash commands for the running session. */
   supportedCommands(): Promise<SdkSlashCommand[]>
+  /** Available models for the running session (the `/model` catalog). */
+  supportedModels(): Promise<SdkModelInfo[]>
+  /** Switch the model used for subsequent responses. */
+  setModel(model?: string): Promise<void>
+  /** Merge settings into the flag layer mid-session (e.g. `{ effortLevel }`). */
+  applyFlagSettings(settings: Record<string, unknown>): Promise<void>
 }
 type SdkModule = { query: (params: { prompt: string | AsyncIterable<SdkUserMessage>; options?: SdkOptions }) => SdkQuery }
 
@@ -110,6 +129,16 @@ function findClaudeExecutable(): string | undefined {
   }
 
   return undefined
+}
+
+/** The user's saved default model (`/model` → "Set as default"), or undefined. */
+function defaultModel(): string | undefined {
+  return vscode.workspace.getConfiguration('heroCode').get<string>('defaultModel')?.trim() || undefined
+}
+
+/** The user's saved default reasoning effort, or undefined. */
+function defaultEffort(): string | undefined {
+  return vscode.workspace.getConfiguration('heroCode').get<string>('defaultEffort')?.trim() || undefined
 }
 
 /** A minimal async-iterable queue we can push user turns into over time. */
@@ -179,8 +208,12 @@ interface ChatSession {
   branch?: string
   /** Percent of context window used (0–100), refreshed each turn. */
   contextPercent?: number
+  /** Current reasoning effort level, when set via the `/model` panel. */
+  effort?: string
   /** Cached skills+slash commands (from the SDK), populated on first `/` menu open. */
   commands?: CommandInfo[]
+  /** Cached model catalog (from the SDK), populated on first `/model` panel open. */
+  models?: ModelChoice[]
 }
 
 /**
@@ -252,6 +285,85 @@ export class ChatSessionManager {
       // No supportedCommands support (older CLI) — no `/` menu, no error.
       return []
     }
+  }
+
+  /**
+   * Fetch the `/model` picker catalog from the SDK. Mirrors {@link listCommands}
+   * (cached per session, refreshed on demand), but returns a status so the panel
+   * can render its ready / empty / error views.
+   */
+  async listModels(
+    id: string,
+    refresh = false,
+  ): Promise<{ status: 'ready' | 'empty' | 'error'; models: ModelChoice[]; currentValue?: string; defaultValue?: string; error?: string }> {
+    const session = this.sessions.get(id)
+    const defaultValue = defaultModel()
+    if (!session?.query) {
+      return { status: 'error', models: [], defaultValue, error: 'Session is not running.' }
+    }
+    let models = refresh ? undefined : session.models
+    if (!models) {
+      try {
+        const raw = await session.query.supportedModels()
+        models = raw.map((m) => ({
+          value: m.value,
+          resolvedModel: m.resolvedModel,
+          displayName: m.displayName,
+          description: m.description,
+          effortLevels: m.supportsEffort ? m.supportedEffortLevels ?? [] : [],
+        }))
+        session.models = models
+      } catch (err) {
+        return { status: 'error', models: [], defaultValue, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+    const currentValue = this.currentModelValue(session, models)
+    return { status: models.length === 0 ? 'empty' : 'ready', models, currentValue, defaultValue }
+  }
+
+  /** Match the session's live model id to a catalog row's `value`. */
+  private currentModelValue(session: ChatSession, models: ModelChoice[]): string | undefined {
+    const live = session.model
+    if (!live) {
+      return undefined
+    }
+    return models.find((m) => m.resolvedModel === live || m.value === live)?.value
+  }
+
+  /**
+   * Switch the live session's model (and optionally effort) for this session
+   * only. Mirrors {@link cycleMode}: optimistic footer update, fire-and-forget
+   * control calls (the CLI echoes the resolved model back via system/status).
+   */
+  useModelForSession(id: string, value: string, effort?: string): void {
+    const session = this.sessions.get(id)
+    if (!session?.query) {
+      return
+    }
+    const choice = session.models?.find((m) => m.value === value)
+    session.model = choice?.resolvedModel ?? value
+    if (effort) {
+      session.effort = effort
+    }
+    this.emitMeta(session)
+    void session.query.setModel(value).catch(() => undefined)
+    if (effort) {
+      void session.query.applyFlagSettings({ effortLevel: effort }).catch(() => undefined)
+    }
+  }
+
+  /**
+   * Persist a default model/effort for new sessions (the `heroCode.defaultModel`
+   * / `heroCode.defaultEffort` settings, read by {@link optionsFor}) and apply it
+   * to the live session too.
+   */
+  async setDefaultModel(id: string, value: string, effort?: string): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('heroCode')
+    await cfg.update('defaultModel', value, vscode.ConfigurationTarget.Global)
+    if (effort) {
+      await cfg.update('defaultEffort', effort, vscode.ConfigurationTarget.Global)
+    }
+    this.useModelForSession(id, value, effort)
   }
 
   /**
@@ -492,9 +604,15 @@ export class ChatSessionManager {
   // --- internals -----------------------------------------------------------
 
   private optionsFor(session: ChatSession): SdkOptions {
+    const model = defaultModel()
+    const effort = defaultEffort()
     return {
       cwd: session.cwd,
       permissionMode: session.permissionMode,
+      // Launch on the user's saved default model/effort (the `/model` panel's "Set
+      // as default"); undefined lets the CLI pick its own defaults.
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
       // Surface every tool prompt to the chat UI as Approve/Deny.
       canUseTool: (toolName, input, opts) => this.onPermission(session, toolName, input, opts),
       // Drive the user's installed Claude CLI. We don't ship the SDK's own ~240MB
@@ -594,6 +712,7 @@ export class ChatSessionManager {
       permissionMode: session.permissionMode,
       branch: session.branch,
       contextPercent: session.contextPercent,
+      effort: session.effort,
     }
   }
 
