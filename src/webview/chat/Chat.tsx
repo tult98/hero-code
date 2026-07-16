@@ -189,6 +189,12 @@ export function Chat() {
   const [ask, setAsk] = useState<AskQuestionRequest | null>(null)
   const [meta, setMeta] = useState<ChatMeta>({})
   const [input, setInput] = useState('')
+  // Submitted-message history for ArrowUp/ArrowDown recall (oldest → newest).
+  const [history, setHistory] = useState<string[]>([])
+  // Position while navigating history: null = editing a fresh line (not recalling).
+  const historyIndex = useRef<number | null>(null)
+  // Draft in the box when navigation began, restored on ArrowDown past newest.
+  const historyDraft = useRef('')
   // Pasted/dropped images, sent as base64 blocks on the next turn. Each is
   // referenced by an `[Image #N]` token the caller inserted into the composer.
   const [images, setImages] = useState<ChatImageAttachment[]>([])
@@ -430,6 +436,12 @@ export function Chat() {
     if (!sessionId || (!text && images.length === 0)) {
       return
     }
+    // Record submissions for ArrowUp/ArrowDown recall (skip consecutive dupes) and
+    // reset the navigation cursor.
+    if (text) {
+      setHistory((h) => (h[h.length - 1] === text ? h : [...h, text]))
+    }
+    historyIndex.current = null
     // `/model` opens the native picker panel instead of sending a prompt.
     if (images.length === 0 && text === '/model') {
       setInput('')
@@ -762,6 +774,51 @@ export function Chat() {
                     return
                   }
                 }
+              }
+              // Shell-style history recall: ArrowUp/ArrowDown cycle prior submissions
+              // when the menu is closed and the caret sits at the text edge, so
+              // multi-line editing is unaffected.
+              const el = e.currentTarget
+              const atStart = el.selectionStart === 0 && el.selectionEnd === 0
+              const atEnd = el.selectionStart === el.value.length && el.selectionEnd === el.value.length
+              if (!menu && e.key === 'ArrowUp' && atStart && history.length > 0) {
+                e.preventDefault()
+                if (historyIndex.current === null) {
+                  historyDraft.current = input
+                  historyIndex.current = history.length - 1
+                } else {
+                  historyIndex.current = Math.max(0, historyIndex.current - 1)
+                }
+                const recalled = history[historyIndex.current]
+                setInput(recalled)
+                requestAnimationFrame(() => {
+                  const t = textareaRef.current
+                  if (t) {
+                    t.focus()
+                    t.setSelectionRange(recalled.length, recalled.length)
+                  }
+                })
+                return
+              }
+              if (!menu && e.key === 'ArrowDown' && atEnd && historyIndex.current !== null) {
+                e.preventDefault()
+                let next: string
+                if (historyIndex.current >= history.length - 1) {
+                  historyIndex.current = null
+                  next = historyDraft.current
+                } else {
+                  historyIndex.current += 1
+                  next = history[historyIndex.current]
+                }
+                setInput(next)
+                requestAnimationFrame(() => {
+                  const t = textareaRef.current
+                  if (t) {
+                    t.focus()
+                    t.setSelectionRange(next.length, next.length)
+                  }
+                })
+                return
               }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
