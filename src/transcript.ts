@@ -35,6 +35,10 @@ export function describeTool(name: string, input: ToolInput | undefined): string
       return i.pattern ? `${name} · ${i.pattern}` : name
     case 'Task':
       return i.description ? `Task · ${i.description}` : 'Task'
+    case 'AskUserQuestion': {
+      const headers = (i.questions ?? []).map((q) => q.header).filter(Boolean)
+      return headers.length ? `AskUserQuestion · ${headers.join(', ')}` : 'AskUserQuestion'
+    }
     default:
       return name
   }

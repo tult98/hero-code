@@ -17,6 +17,7 @@ const TOOL_ICON: Record<string, string> = {
   Task: 'organization',
   WebFetch: 'globe',
   WebSearch: 'search',
+  AskUserQuestion: 'comment-discussion',
 }
 
 interface TodoItem {

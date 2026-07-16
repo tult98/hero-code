@@ -5,7 +5,7 @@ import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import * as vscode from 'vscode'
-import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, ModelChoice, PermissionRequest } from './types.js'
+import type { AskQuestionItem, AskQuestionOption, AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, ModelChoice, PermissionRequest } from './types.js'
 import { describeTool, encodeProjectPath, lastAssistantModel, parseTranscriptMessages } from '../transcript.js'
 import type { ToolInput } from '../types.js'
 
@@ -188,6 +188,49 @@ interface PendingPermission {
   resolve: (result: SdkPermissionResult) => void
 }
 
+interface PendingAsk {
+  request: AskQuestionRequest
+  /** Raw tool input, so the resolved answer can be folded back into `updatedInput`. */
+  input: Record<string, unknown>
+  resolve: (result: SdkPermissionResult) => void
+}
+
+/**
+ * Coerce raw AskUserQuestion tool input into the picker's question list, dropping
+ * anything malformed. Returns `[]` when there is nothing usable to ask (caller
+ * then lets the tool through untouched rather than showing an empty picker).
+ */
+function parseAskQuestions(input: Record<string, unknown>): AskQuestionItem[] {
+  const raw = Array.isArray(input?.questions) ? input.questions : []
+  const items: AskQuestionItem[] = []
+  for (const q of raw) {
+    if (!q || typeof q !== 'object') {
+      continue
+    }
+    const question = String((q as Record<string, unknown>).question ?? '')
+    const header = String((q as Record<string, unknown>).header ?? '')
+    const rawOptions = Array.isArray((q as Record<string, unknown>).options) ? ((q as Record<string, unknown>).options as unknown[]) : []
+    const options: AskQuestionOption[] = []
+    for (const o of rawOptions) {
+      if (!o || typeof o !== 'object') {
+        continue
+      }
+      const label = String((o as Record<string, unknown>).label ?? '')
+      if (!label) {
+        continue
+      }
+      const desc = (o as Record<string, unknown>).description
+      const preview = (o as Record<string, unknown>).preview
+      options.push({ label, description: typeof desc === 'string' ? desc : undefined, preview: typeof preview === 'string' ? preview : undefined })
+    }
+    if (!question || options.length === 0) {
+      continue
+    }
+    items.push({ question, header: header || question, multiSelect: !!(q as Record<string, unknown>).multiSelect, options })
+  }
+  return items
+}
+
 interface ChatSession {
   id: string
   cwd: string
@@ -199,6 +242,8 @@ interface ChatSession {
   queue: PushQueue<SdkUserMessage>
   query?: SdkQuery
   pending: Map<string, PendingPermission>
+  /** tool_use id → parked AskUserQuestion picker (separate from Approve/Deny prompts). */
+  askPending: Map<string, PendingAsk>
   // --- live footer facts (see ChatMeta) ---
   /** Raw model id from the SDK, e.g. `claude-opus-4-8`. */
   model?: string
@@ -230,6 +275,14 @@ export class ChatSessionManager {
   /** Memoized absolute path to the `claude` executable (see resolveClaudePath). */
   private claudePathCache?: string
 
+  /**
+   * Fires whenever any session's live {@link ChatStatus} changes. The Sessions
+   * sidebar subscribes so it can re-render the row immediately, instead of
+   * waiting on its filesystem poll (which never sees streaming/awaiting-permission).
+   */
+  private readonly statusChanged = new vscode.EventEmitter<void>()
+  readonly onDidChangeStatus = this.statusChanged.event
+
   constructor(
     private readonly emit: (event: ChatOutbound) => void,
     extensionPath: string,
@@ -241,14 +294,20 @@ export class ChatSessionManager {
     return this.sessions.has(id)
   }
 
+  /** Live status of a session, if the manager owns it (used by the sidebar overlay). */
+  chatStatusOf(id: string): ChatStatus | undefined {
+    return this.sessions.get(id)?.status
+  }
+
   /** Snapshot for hydrating the panel when a session becomes active. */
-  snapshot(id: string): { title: string; messages: ChatMessage[]; status: ChatStatus; permission?: PermissionRequest; meta: ChatMeta } | undefined {
+  snapshot(id: string): { title: string; messages: ChatMessage[]; status: ChatStatus; permission?: PermissionRequest; question?: AskQuestionRequest; meta: ChatMeta } | undefined {
     const session = this.sessions.get(id)
     if (!session) {
       return undefined
     }
     const permission = [...session.pending.values()][0]?.request
-    return { title: this.titleOf(session), messages: session.messages, status: session.status, permission, meta: this.metaOf(session) }
+    const question = [...session.askPending.values()][0]?.request
+    return { title: this.titleOf(session), messages: session.messages, status: session.status, permission, question, meta: this.metaOf(session) }
   }
 
   /** Working directory of a session (used to scope `@` file search). */
@@ -382,6 +441,7 @@ export class ChatSessionManager {
       toolCards: new Map(),
       queue: new PushQueue<SdkUserMessage>(),
       pending: new Map(),
+      askPending: new Map(),
       permissionMode: 'default',
       branch: gitBranch(cwd),
     }
@@ -410,6 +470,7 @@ export class ChatSessionManager {
       toolCards: new Map(),
       queue: new PushQueue<SdkUserMessage>(),
       pending: new Map(),
+      askPending: new Map(),
       permissionMode: 'default',
       branch: gitBranch(cwd),
       // Live model isn't reported until the first turn — seed from history so the
@@ -576,6 +637,35 @@ export class ChatSessionManager {
     }
   }
 
+  /**
+   * Resolve a parked AskUserQuestion picker. On answer, the user's selections are
+   * folded into the tool input under `answers` and the tool is allowed to run
+   * (the CLI echoes them as the tool result). Dismiss resolves it as a benign
+   * deny so the SDK is never left blocked, and the composer returns.
+   */
+  respondQuestion(requestId: string, answers: Record<string, string>, dismissed?: boolean): void {
+    for (const session of this.sessions.values()) {
+      const pending = session.askPending.get(requestId)
+      if (!pending) {
+        continue
+      }
+      session.askPending.delete(requestId)
+      const card = session.toolCards.get(requestId)
+      if (card) {
+        card.status = dismissed ? 'denied' : 'allowed'
+        this.emit({ type: 'update', sessionId: session.id, message: this.messageOfCard(session, card) })
+      }
+      this.emit({ type: 'askQuestionResolved', sessionId: session.id, requestId })
+      pending.resolve(
+        dismissed
+          ? { behavior: 'deny', message: 'The user dismissed the questions without answering.' }
+          : { behavior: 'allow', updatedInput: { ...pending.input, answers } },
+      )
+      this.setStatus(session, 'streaming')
+      return
+    }
+  }
+
   interrupt(id: string): void {
     const session = this.sessions.get(id)
     if (!session?.query) {
@@ -599,6 +689,7 @@ export class ChatSessionManager {
     for (const id of [...this.sessions.keys()]) {
       this.dispose(id)
     }
+    this.statusChanged.dispose()
   }
 
   // --- internals -----------------------------------------------------------
@@ -823,6 +914,11 @@ export class ChatSessionManager {
     input: Record<string, unknown>,
     opts: SdkPermissionInfo,
   ): Promise<SdkPermissionResult> {
+    // AskUserQuestion is a decision prompt, not an Approve/Deny gate: hand it to
+    // the dedicated picker instead of the generic permission UI.
+    if (toolName === 'AskUserQuestion') {
+      return this.onAskQuestion(session, input, opts)
+    }
     const requestId = opts.toolUseID || opts.requestId || randomUUID()
     const request: PermissionRequest = {
       requestId,
@@ -836,6 +932,29 @@ export class ChatSessionManager {
     this.emit({ type: 'permission', request })
     return new Promise<SdkPermissionResult>((resolve) => {
       session.pending.set(requestId, { request, resolve })
+    })
+  }
+
+  /**
+   * Park an AskUserQuestion tool call and open the picker. Parsed defensively:
+   * malformed input (missing questions/options) falls back to allowing the tool
+   * so a bad payload can never wedge the session on an empty picker.
+   */
+  private onAskQuestion(
+    session: ChatSession,
+    input: Record<string, unknown>,
+    opts: SdkPermissionInfo,
+  ): Promise<SdkPermissionResult> {
+    const requestId = opts.toolUseID || opts.requestId || randomUUID()
+    const questions = parseAskQuestions(input)
+    if (questions.length === 0) {
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    }
+    const request: AskQuestionRequest = { requestId, sessionId: session.id, questions }
+    this.setStatus(session, 'awaiting-permission')
+    this.emit({ type: 'askQuestion', request })
+    return new Promise<SdkPermissionResult>((resolve) => {
+      session.askPending.set(requestId, { request, input, resolve })
     })
   }
 
@@ -862,6 +981,7 @@ export class ChatSessionManager {
     }
     session.status = status
     this.emit({ type: 'status', sessionId: session.id, status })
+    this.statusChanged.fire()
   }
 
   private titleOf(session: ChatSession): string {

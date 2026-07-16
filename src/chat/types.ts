@@ -105,6 +105,41 @@ export interface CommandInfo {
   argumentHint: string
 }
 
+/**
+ * One selectable choice in an {@link AskQuestionItem}. Mirrors the SDK's
+ * `AskUserQuestionInput` option shape; `preview` is optional rich content
+ * (e.g. a code/mockup snippet) the design surfaces alongside the choice.
+ */
+export interface AskQuestionOption {
+  label: string
+  description?: string
+  preview?: string
+}
+
+/**
+ * One question inside an AskUserQuestion tool call. `multiSelect` chooses radios
+ * vs checkboxes; an "Other / type something else" free-text choice is always
+ * offered by the picker (the model is told not to add its own).
+ */
+export interface AskQuestionItem {
+  question: string
+  /** Short chip label (≤12 chars), e.g. `Priority`. */
+  header: string
+  multiSelect: boolean
+  options: AskQuestionOption[]
+}
+
+/**
+ * A parked AskUserQuestion tool call awaiting the user's selections. Reuses the
+ * same pause-and-resolve machinery as {@link PermissionRequest} (keyed by the
+ * tool_use id), but renders the multi-step picker instead of Approve/Deny.
+ */
+export interface AskQuestionRequest {
+  requestId: string
+  sessionId: string
+  questions: AskQuestionItem[]
+}
+
 /** A parked tool-permission prompt awaiting the user's Approve/Deny. */
 export interface PermissionRequest {
   requestId: string
@@ -119,13 +154,18 @@ export interface PermissionRequest {
 
 /** Host → chat webview. */
 export type ChatOutbound =
-  | { type: 'hydrate'; sessionId: string; title: string; messages: ChatMessage[]; status: ChatStatus; permission?: PermissionRequest; meta?: ChatMeta }
+  | { type: 'hydrate'; sessionId: string; title: string; messages: ChatMessage[]; status: ChatStatus; permission?: PermissionRequest; question?: AskQuestionRequest; meta?: ChatMeta }
   | { type: 'append'; sessionId: string; message: ChatMessage }
   | { type: 'update'; sessionId: string; message: ChatMessage }
   | { type: 'status'; sessionId: string; status: ChatStatus }
   | { type: 'meta'; sessionId: string; meta: ChatMeta }
   | { type: 'permission'; request: PermissionRequest }
   | { type: 'permissionResolved'; sessionId: string; requestId: string }
+  // AskUserQuestion picker: `askQuestion` opens it with the parsed questions;
+  // `askQuestionResolved` clears it (answered elsewhere, session switched, or the
+  // SDK auto-continued). Parallels `permission` / `permissionResolved`.
+  | { type: 'askQuestion'; request: AskQuestionRequest }
+  | { type: 'askQuestionResolved'; sessionId: string; requestId: string }
   | { type: 'mention'; sessionId: string; text: string }
   // Composer autocomplete results. `fileResults` is tagged with the originating
   // `query` so the webview can drop stale/out-of-order responses.
@@ -143,6 +183,10 @@ export type ChatInbound =
   // cwd; output is shown in the chat but not sent to Claude.
   | { type: 'runCommand'; sessionId: string; command: string }
   | { type: 'permissionResponse'; sessionId: string; requestId: string; allow: boolean }
+  // AskUserQuestion answer: `answers` maps each question's text → the chosen
+  // answer string (multi-select joined by `, `, custom free-text included).
+  // `dismissed` resolves the tool without an answer (composer returns).
+  | { type: 'answerQuestion'; sessionId: string; requestId: string; answers: Record<string, string>; dismissed?: boolean }
   | { type: 'interrupt'; sessionId: string }
   | { type: 'cycleMode'; sessionId: string }
   // Composer autocomplete requests (`@` file search, `/` skills+commands).

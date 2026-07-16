@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, CommandInfo, FileHit, ModelChoice, PermissionRequest } from '../../chat/types.js'
+import type { AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, CommandInfo, FileHit, ModelChoice, PermissionRequest } from '../../chat/types.js'
 import { vscode } from './vscode-api.js'
+import { AskQuestionPanel } from './AskQuestionPanel.js'
 import { Message } from './Message.js'
 import { ModelPanel, type ModelPanelStatus } from './ModelPanel.js'
 
@@ -139,6 +140,7 @@ export function Chat() {
   const [status, setStatus] = useState<ChatStatus>('idle')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [permission, setPermission] = useState<PermissionRequest | null>(null)
+  const [ask, setAsk] = useState<AskQuestionRequest | null>(null)
   const [meta, setMeta] = useState<ChatMeta>({})
   const [input, setInput] = useState('')
   // Pasted/dropped images, sent as base64 blocks on the next turn. Each is
@@ -181,6 +183,7 @@ export function Chat() {
           setStatus(msg.status)
           setMessages(msg.messages)
           setPermission(msg.permission ?? null)
+          setAsk(msg.question ?? null)
           setMeta(msg.meta ?? {})
           // A different session's commands/files no longer apply — reset the menu.
           setMenu(null)
@@ -217,6 +220,12 @@ export function Chat() {
           break
         case 'permissionResolved':
           setPermission((prev) => (prev?.requestId === msg.requestId ? null : prev))
+          break
+        case 'askQuestion':
+          setAsk(msg.request)
+          break
+        case 'askQuestionResolved':
+          setAsk((prev) => (prev?.requestId === msg.requestId ? null : prev))
           break
         case 'mention':
           setInput((prev) => (prev ? `${prev}${msg.text}` : msg.text))
@@ -548,7 +557,26 @@ export function Chat() {
           </div>
         )}
 
-        {/* Input card */}
+        {/* Input card — swapped for the AskUserQuestion picker while Claude waits on a
+            decision. Only the composer input is replaced; the transcript above and the
+            session-facts footer below stay put. */}
+        {ask ? (
+          <AskQuestionPanel
+            request={ask}
+            onSubmit={(answers) => {
+              if (sessionId) {
+                vscode.postMessage({ type: 'answerQuestion', sessionId, requestId: ask.requestId, answers })
+              }
+              setAsk(null)
+            }}
+            onDismiss={() => {
+              if (sessionId) {
+                vscode.postMessage({ type: 'answerQuestion', sessionId, requestId: ask.requestId, answers: {}, dismissed: true })
+              }
+              setAsk(null)
+            }}
+          />
+        ) : (
         <div
           className='relative flex flex-col gap-[7px] rounded-[11px] border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-2.5 py-2 focus-within:border-vs-accent'
           style={shellMode ? { borderColor: SHELL_ACCENT, background: `color-mix(in srgb, ${SHELL_ACCENT} 7%, var(--vscode-input-background))` } : undefined}
@@ -715,6 +743,7 @@ export function Chat() {
             )}
           </div>
         </div>
+        )}
 
         {/* Meta footer — live per-session facts from the session's SDK stream. */}
         <div className='flex items-center gap-2.5 mt-1.5 px-0.5 text-[10.5px] text-vs-desc flex-wrap'>

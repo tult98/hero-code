@@ -66,6 +66,8 @@ export interface ToolInput {
   description?: string
   command?: string
   pattern?: string
+  /** AskUserQuestion: the questions posed (only `header` is used for the label). */
+  questions?: { header?: string }[]
 }
 
 export interface ContentBlock {

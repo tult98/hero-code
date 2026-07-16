@@ -69,7 +69,7 @@ export class ChatView implements vscode.WebviewViewProvider {
     if (!this.view) {
       return
     }
-    const sessionId = event.type === 'permission' ? event.request.sessionId : event.sessionId
+    const sessionId = event.type === 'permission' ? event.request.sessionId : event.type === 'askQuestion' ? event.request.sessionId : event.sessionId
     if (sessionId !== this.activeId) {
       return
     }
@@ -95,6 +95,9 @@ export class ChatView implements vscode.WebviewViewProvider {
         return
       case 'permissionResponse':
         manager.respondPermission(msg.requestId, msg.allow)
+        return
+      case 'answerQuestion':
+        manager.respondQuestion(msg.requestId, msg.answers, msg.dismissed)
         return
       case 'interrupt':
         manager.interrupt(msg.sessionId)
@@ -174,6 +177,7 @@ export class ChatView implements vscode.WebviewViewProvider {
       messages: snap.messages,
       status: snap.status,
       permission: snap.permission,
+      question: snap.question,
       meta: snap.meta,
     })
   }

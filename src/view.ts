@@ -1,13 +1,27 @@
 import * as vscode from 'vscode'
 import { randomUUID } from 'crypto'
-import type { SessionItem, SessionMeta } from './types.js'
+import type { SessionItem, SessionMeta, Status } from './types.js'
 import { getSessionGroups } from './sessions.js'
 import { hasSessionTerminal, openNewSessionTerminal, openSessionTerminal } from './terminal.js'
 import type { ChatSessionManager } from './chat/manager.js'
+import type { ChatStatus } from './chat/types.js'
 import type { ChatView } from './chat/view.js'
 
 /** `globalState` key under which per-session user metadata is stored. */
 const META_KEY = 'hero-code.sessionMeta'
+
+/**
+ * Maps the chat GUI's live status onto the sidebar's vocabulary. A chat session
+ * sitting between turns is `idle` to the chat, but from the sidebar's point of
+ * view it is a live process "waiting for input" — the sidebar's own `idle` means
+ * "no live process backs it".
+ */
+const CHAT_STATUS_TO_SIDEBAR: Record<ChatStatus, Status> = {
+  streaming: 'working',
+  'awaiting-permission': 'waiting',
+  error: 'error',
+  idle: 'waiting',
+}
 
 export class SessionsViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hero-code.sessions'
@@ -42,7 +56,15 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     private readonly memento: vscode.Memento,
     private readonly chat: ChatSessionManager,
     private readonly chatView: ChatView,
-  ) {}
+  ) {
+    // Reflect chat status transitions immediately, rather than on the next poll.
+    // The visibility guard mirrors the poll; onDidChangeVisibility re-posts on reveal.
+    this.chat.onDidChangeStatus(() => {
+      if (this.view?.visible) {
+        this.postState()
+      }
+    })
+  }
 
   /** Whether new/idle sessions open in the GUI chat instead of a terminal. */
   private get chatMode(): boolean {
@@ -235,6 +257,23 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         status: 'waiting',
       }
       group.sessions.unshift(placeholder)
+    }
+
+    // Overlay the chat GUI's live status onto rows it owns. The manager's
+    // in-memory status is real-time and authoritative for chat sessions, whereas
+    // the filesystem-derived status lags the poll and misses SDK-driven states.
+    for (const group of groups) {
+      for (const session of group.sessions) {
+        const liveId = this.chat.has(session.id)
+          ? session.id
+          : session.liveId && this.chat.has(session.liveId)
+            ? session.liveId
+            : undefined
+        const chatStatus = liveId ? this.chat.chatStatusOf(liveId) : undefined
+        if (chatStatus) {
+          session.status = CHAT_STATUS_TO_SIDEBAR[chatStatus]
+        }
+      }
     }
 
     const selectId = this.selectOnce
