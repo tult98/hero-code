@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, CommandInfo, FileHit, ModelChoice, PermissionRequest } from '../../chat/types.js'
 import { vscode } from './vscode-api.js'
 import { AskQuestionPanel } from './AskQuestionPanel.js'
@@ -134,6 +134,52 @@ function filterCommands(cmds: CommandInfo[], query: string): CommandInfo[] {
     .map((x) => x.c)
 }
 
+/**
+ * If `text` begins with a fully-typed `/<name>` matching a known command, return that
+ * command and the substring after the name token (its arguments, including any leading
+ * space). Returns null for normal text or a partial/unknown command — those get no
+ * highlight. Used to color the command blue and show its `argumentHint` as ghost text.
+ */
+function matchLeadingCommand(text: string, cmds: CommandInfo[]): { command: CommandInfo; rest: string } | null {
+  if (!text.startsWith('/')) {
+    return null
+  }
+  const end = text.search(/\s/)
+  const token = end === -1 ? text : text.slice(0, end)
+  const name = token.slice(1)
+  const command = cmds.find((c) => c.name === name)
+  if (!command) {
+    return null
+  }
+  return { command, rest: text.slice(token.length) }
+}
+
+/**
+ * Highlight overlay content mirrored behind the composer textarea when it holds a command
+ * line: the command name in blue, the typed arguments in normal foreground, and — while no
+ * argument has been typed yet — the command's `argumentHint` as dimmed ghost text. The text
+ * up to the ghost span matches the textarea value character-for-character so wrapping aligns.
+ */
+function renderCommandOverlay(text: string, cmds: CommandInfo[]): ReactNode {
+  const match = matchLeadingCommand(text, cmds)
+  if (!match) {
+    return text
+  }
+  const { command, rest } = match
+  const showHint = rest.trim() === '' && command.argumentHint !== ''
+  return (
+    <>
+      <span style={{ color: 'var(--vscode-textLink-foreground)' }}>{`/${command.name}`}</span>
+      {rest}
+      {showHint && (
+        <span style={{ color: 'var(--vscode-input-placeholderForeground)' }}>
+          {(rest.endsWith(' ') ? '' : ' ') + command.argumentHint}
+        </span>
+      )}
+    </>
+  )
+}
+
 export function Chat() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [title, setTitle] = useState('Claude Chat')
@@ -166,6 +212,7 @@ export function Chat() {
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
 
   // Cycle the composer's hint line while mounted.
   useEffect(() => {
@@ -624,9 +671,29 @@ export function Chat() {
               )}
             </div>
           )}
+          <div className='relative'>
+          {input.startsWith('/') && (
+            // Mirror layer behind the transparent textarea: colors the command name and
+            // shows its argument hint as ghost text. aria-hidden — purely visual.
+            <div
+              ref={overlayRef}
+              aria-hidden
+              className='pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[1.45] min-h-[38px] text-(--vscode-input-foreground)'
+            >
+              {renderCommandOverlay(input, commands)}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
-            className='w-full resize-none bg-transparent outline-none text-[13px] leading-[1.45] min-h-[38px] text-(--vscode-input-foreground) placeholder:text-vs-desc'
+            className={`w-full resize-none bg-transparent outline-none text-[13px] leading-[1.45] min-h-[38px] placeholder:text-vs-desc ${input.startsWith('/') ? 'text-transparent' : 'text-(--vscode-input-foreground)'}`}
+            style={input.startsWith('/') ? { caretColor: 'var(--vscode-input-foreground)' } : undefined}
+            onScroll={(e) => {
+              const o = overlayRef.current
+              if (o) {
+                o.scrollTop = e.currentTarget.scrollTop
+                o.scrollLeft = e.currentTarget.scrollLeft
+              }
+            }}
             rows={2}
             placeholder={messages.length === 0 ? 'Send a message to start…' : 'Reply to Claude…'}
             value={input}
@@ -712,6 +779,7 @@ export function Chat() {
               }
             }}
           />
+          </div>
           <div className='flex items-center gap-2'>
             {/* Shell-mode indicator, else a rotating hint (replaces the old icons). */}
             {shellMode ? (
