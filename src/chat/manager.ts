@@ -5,7 +5,7 @@ import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import * as vscode from 'vscode'
-import type { AskQuestionItem, AskQuestionOption, AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, ModelChoice, PermissionRequest } from './types.js'
+import type { AskQuestionItem, AskQuestionOption, AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, ModelChoice, PermissionKind, PermissionRequest, PermissionRisk } from './types.js'
 import { describeTool, encodeProjectPath, lastAssistantModel, parseTranscriptMessages } from '../transcript.js'
 import type { ToolInput } from '../types.js'
 
@@ -18,9 +18,22 @@ type SdkContentBlock =
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
 type SdkUserMessage = { type: 'user'; message: { role: 'user'; content: string | SdkContentBlock[] }; parent_tool_use_id: null }
 type SdkPermissionResult =
-  | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
+  | { behavior: 'allow'; updatedInput?: Record<string, unknown>; updatedPermissions?: unknown[] }
   | { behavior: 'deny'; message: string }
-type SdkPermissionInfo = { toolUseID?: string; requestId?: string; title?: string; displayName?: string }
+type SdkPermissionInfo = {
+  toolUseID?: string
+  requestId?: string
+  title?: string
+  displayName?: string
+  /** Human-readable subtitle from the SDK bridge. */
+  description?: string
+  /** Ready-made "always allow" rules to echo back as `updatedPermissions`. */
+  suggestions?: unknown[]
+  /** Path that triggered the prompt (e.g. a write outside allowed dirs). */
+  blockedPath?: string
+  /** Why the prompt fired; surfaced as the note/explain text. */
+  decisionReason?: string
+}
 type SdkOptions = {
   cwd: string
   permissionMode?: string
@@ -185,6 +198,8 @@ class PushQueue<T> implements AsyncIterable<T> {
 
 interface PendingPermission {
   request: PermissionRequest
+  /** SDK-supplied "always allow" rules, echoed back when the user picks `always`. */
+  suggestions?: unknown[]
   resolve: (result: SdkPermissionResult) => void
 }
 
@@ -229,6 +244,149 @@ function parseAskQuestions(input: Record<string, unknown>): AskQuestionItem[] {
     items.push({ question, header: header || question, multiSelect: !!(q as Record<string, unknown>).multiSelect, options })
   }
   return items
+}
+
+/** Non-empty string, or undefined. */
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' && v ? v : undefined
+}
+
+/** `key: value, …` from an object's top-level entries, capped for display. */
+function compactArgs(input: Record<string, unknown>): string {
+  const parts = Object.entries(input).map(([k, v]) => `${k}: ${JSON.stringify(v) ?? String(v)}`)
+  const s = parts.join(', ')
+  return s.length > 120 ? s.slice(0, 119) + '…' : s
+}
+
+/** One-line JSON of an object, capped for display. */
+function compactJson(v: unknown): string {
+  try {
+    const s = JSON.stringify(v)
+    return s && s.length > 160 ? s.slice(0, 159) + '…' : s ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** Pretty full input for the `^E` inspector; undefined when there's nothing to show. */
+function prettyInput(v: unknown): string | undefined {
+  if (!v || typeof v !== 'object' || Object.keys(v as object).length === 0) {
+    return undefined
+  }
+  try {
+    const s = JSON.stringify(v, null, 2)
+    return s.length > 2000 ? s.slice(0, 1999) + '…' : s
+  } catch {
+    return undefined
+  }
+}
+
+/** Scope phrase for "always allow", read from the SDK suggestions' destination. */
+function alwaysScope(suggestions: unknown[] | undefined): string {
+  const dest = suggestions?.map((s) => (s && typeof s === 'object' ? (s as Record<string, unknown>).destination : undefined)).find(Boolean)
+  switch (dest) {
+    case 'projectSettings':
+    case 'localSettings':
+      return 'this project'
+    case 'userSettings':
+      return 'all projects'
+    default:
+      return 'this session'
+  }
+}
+
+/**
+ * Enrich the SDK's raw permission facts into the `PermissionRequest` the approval
+ * panel renders. Risk/badge/command are derived from the tool name and its input;
+ * note/explain/always-scope come straight from the SDK (`decisionReason`,
+ * `blockedPath`, `suggestions`), so nothing user-facing is fabricated.
+ */
+function describePermission(
+  requestId: string,
+  sessionId: string,
+  toolName: string,
+  input: Record<string, unknown>,
+  opts: SdkPermissionInfo,
+): PermissionRequest {
+  let kind: PermissionKind = 'generic'
+  let risk: PermissionRisk = 'med'
+  let badge = opts.displayName || toolName
+  let badgeIcon = 'codicon-tools'
+  let riskLabel = 'Action'
+  let riskIcon = 'codicon-shield'
+  let blockLabel = 'Tool call'
+  let command = ''
+
+  if (toolName === 'Bash') {
+    kind = 'bash'
+    risk = 'high'
+    badge = 'Bash'
+    badgeIcon = 'codicon-terminal'
+    riskLabel = 'Destructive'
+    riskIcon = 'codicon-flame'
+    blockLabel = 'Bash command'
+    command = str(input.command) ?? ''
+  } else if (toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit' || toolName === 'NotebookEdit') {
+    kind = 'write'
+    badge = 'Write'
+    badgeIcon = 'codicon-edit'
+    riskLabel = 'Write'
+    riskIcon = 'codicon-warning'
+    blockLabel = 'File write'
+    command = str(input.file_path) ?? str(input.notebook_path) ?? ''
+  } else if (toolName === 'WebFetch' || toolName === 'WebSearch') {
+    kind = 'fetch'
+    badge = toolName === 'WebSearch' ? 'Search' : 'Fetch'
+    badgeIcon = 'codicon-globe'
+    riskLabel = 'Network'
+    riskIcon = 'codicon-globe'
+    blockLabel = 'Network request'
+    command = str(input.url) ?? str(input.query) ?? ''
+  } else if (toolName.startsWith('mcp__')) {
+    kind = 'mcp'
+    badge = 'MCP'
+    badgeIcon = 'codicon-plug'
+    riskLabel = 'External'
+    riskIcon = 'codicon-plug'
+    blockLabel = 'MCP tool call'
+    const parts = toolName.slice(5).split('__')
+    const server = parts[0] || 'mcp'
+    const tool = parts.slice(1).join('__') || 'call'
+    command = `${server}.${tool}(${compactArgs(input)})`
+  } else {
+    command = str(input.command) ?? str(input.file_path) ?? str(input.url) ?? compactJson(input)
+  }
+
+  const noteBits: string[] = []
+  if (str(opts.decisionReason)) {
+    noteBits.push(opts.decisionReason as string)
+  }
+  if (str(opts.blockedPath)) {
+    noteBits.push(`Path: ${opts.blockedPath}`)
+  }
+  const canAlways = Array.isArray(opts.suggestions) && opts.suggestions.length > 0
+
+  return {
+    requestId,
+    sessionId,
+    toolName,
+    title: opts.title,
+    displayName: opts.displayName,
+    input,
+    kind,
+    risk,
+    badge,
+    badgeIcon,
+    riskLabel,
+    riskIcon,
+    blockLabel,
+    command: command || badge,
+    description: str(opts.description),
+    note: noteBits.length ? noteBits.join(' · ') : undefined,
+    explain: prettyInput(input),
+    canAlways,
+    alwaysLabel: canAlways ? alwaysScope(opts.suggestions) : undefined,
+  }
 }
 
 interface ChatSession {
@@ -444,6 +602,11 @@ export class ChatSessionManager {
       askPending: new Map(),
       permissionMode: 'default',
       branch: gitBranch(cwd),
+      // Seed the footer with the model/effort this chat will launch with (the
+      // saved defaults handed to the SDK below), so a brand-new chat shows them
+      // before the first turn instead of a bare "—".
+      model: defaultModel(),
+      effort: defaultEffort(),
     }
     this.sessions.set(id, session)
     session.query = query({
@@ -451,6 +614,11 @@ export class ChatSessionManager {
       options: { ...this.optionsFor(session), sessionId: id },
     })
     void this.consume(session)
+    // Ask the live session for its resolved model + starting context usage right
+    // away (the same figures Claude Code shows at startup). Fire-and-forget and
+    // fully guarded, so a CLI that only answers after a turn is a harmless no-op;
+    // this fills in the model when no default is configured.
+    void this.refreshContext(session)
     return id
   }
 
@@ -614,25 +782,43 @@ export class ChatSessionManager {
   }
 
   /** Resolve a parked tool-permission prompt with the user's choice. */
-  respondPermission(requestId: string, allow: boolean): void {
+  respondPermission(requestId: string, decision: 'yes' | 'always' | 'no', amend?: string): void {
     for (const session of this.sessions.values()) {
       const pending = session.pending.get(requestId)
       if (!pending) {
         continue
       }
       session.pending.delete(requestId)
+      const allow = decision !== 'no'
       const card = session.toolCards.get(requestId)
       if (card) {
         card.status = allow ? 'allowed' : 'denied'
         this.emit({ type: 'update', sessionId: session.id, message: this.messageOfCard(session, card) })
       }
       this.emit({ type: 'permissionResolved', sessionId: session.id, requestId })
-      pending.resolve(
-        allow
-          ? { behavior: 'allow', updatedInput: card ? (card.input as Record<string, unknown>) : {} }
-          : { behavior: 'deny', message: 'Denied by the user.' },
-      )
+      if (allow) {
+        // `always` echoes the SDK's own suggestions so it stops asking for this
+        // tool/scope; the SDK owns whether that persists to the session or project.
+        pending.resolve({
+          behavior: 'allow',
+          updatedInput: card ? (card.input as Record<string, unknown>) : {},
+          ...(decision === 'always' && pending.suggestions?.length ? { updatedPermissions: pending.suggestions } : {}),
+        })
+        // Approving a plan should hand off to `auto`, not the SDK's default of
+        // `acceptEdits`. Set it explicitly so our value wins over the status echo.
+        if (pending.request.toolName === 'ExitPlanMode') {
+          session.permissionMode = 'auto'
+          this.emitMeta(session)
+          void session.query?.setPermissionMode('auto').catch(() => undefined)
+        }
+      } else {
+        pending.resolve({ behavior: 'deny', message: 'Denied by the user.' })
+      }
       this.setStatus(session, 'streaming')
+      // An amend note rides along with an approval as the next user turn.
+      if (allow && amend?.trim()) {
+        this.send(session.id, amend.trim())
+      }
       return
     }
   }
@@ -920,18 +1106,11 @@ export class ChatSessionManager {
       return this.onAskQuestion(session, input, opts)
     }
     const requestId = opts.toolUseID || opts.requestId || randomUUID()
-    const request: PermissionRequest = {
-      requestId,
-      sessionId: session.id,
-      toolName,
-      title: opts.title,
-      displayName: opts.displayName,
-      input,
-    }
+    const request = describePermission(requestId, session.id, toolName, input, opts)
     this.setStatus(session, 'awaiting-permission')
     this.emit({ type: 'permission', request })
     return new Promise<SdkPermissionResult>((resolve) => {
-      session.pending.set(requestId, { request, resolve })
+      session.pending.set(requestId, { request, suggestions: opts.suggestions, resolve })
     })
   }
 

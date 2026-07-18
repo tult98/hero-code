@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ChatToolUseBlock } from '../../chat/types.js'
 import { CodeBlock } from './CodeBlock.js'
 import { DiffView, computeDiff } from './DiffView.js'
+import { Markdown } from './Markdown.js'
 
 /** Codicon per tool name (falls back to a generic wrench). */
 const TOOL_ICON: Record<string, string> = {
@@ -18,6 +19,7 @@ const TOOL_ICON: Record<string, string> = {
   WebFetch: 'globe',
   WebSearch: 'search',
   AskUserQuestion: 'comment-discussion',
+  ExitPlanMode: 'checklist',
 }
 
 interface TodoItem {
@@ -59,10 +61,11 @@ export function ToolCard({ block }: { block: ChatToolUseBlock }) {
   const newStr = str(input.new_string)
   const hasDiff = isEdit && oldStr !== undefined && newStr !== undefined
   const todos = Array.isArray(input.todos) ? (input.todos as TodoItem[]) : undefined
+  const isPlan = block.name === 'ExitPlanMode' && !!str(input.plan)
 
   // Does this card have anything to reveal?
-  const hasBody = hasDiff || !!todos || !!block.result || !!str(input.content) || block.name === 'Task'
-  const defaultOpen = block.name === 'Bash' || isEdit || block.name === 'TodoWrite'
+  const hasBody = hasDiff || !!todos || isPlan || !!block.result || !!str(input.content) || block.name === 'Task'
+  const defaultOpen = block.name === 'Bash' || isEdit || block.name === 'TodoWrite' || isPlan
   const [open, setOpen] = useState(defaultOpen)
 
   const isError = block.status === 'error'
@@ -112,6 +115,10 @@ export function ToolCard({ block }: { block: ChatToolUseBlock }) {
           ) : block.name === 'Read' && block.result ? (
             <div className='px-2 pb-2'>
               <CodeBlock language={langFromPath(str(input.file_path))} code={block.result} />
+            </div>
+          ) : isPlan ? (
+            <div className='px-3 py-2'>
+              <Markdown text={str(input.plan) as string} />
             </div>
           ) : block.name === 'Task' ? (
             <TaskBody input={input} result={block.result} />

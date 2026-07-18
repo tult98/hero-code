@@ -140,7 +140,18 @@ export interface AskQuestionRequest {
   questions: AskQuestionItem[]
 }
 
-/** A parked tool-permission prompt awaiting the user's Approve/Deny. */
+/** Coarse tool family the approval panel styles itself around. */
+export type PermissionKind = 'bash' | 'write' | 'fetch' | 'mcp' | 'generic'
+
+/** Risk band: `high` flips the panel accent red, everything else amber. */
+export type PermissionRisk = 'high' | 'med' | 'low'
+
+/**
+ * A parked tool-permission prompt awaiting the user's decision. The plain
+ * SDK facts (`toolName`/`title`/`displayName`/`input`) are enriched host-side by
+ * `describePermission` into the fields the approval panel renders directly, so
+ * the panel stays a pure view (mirrors how `AskQuestionItem` is pre-parsed).
+ */
 export interface PermissionRequest {
   requestId: string
   sessionId: string
@@ -150,6 +161,31 @@ export interface PermissionRequest {
   /** Short noun phrase for the action, suitable for a compact header. */
   displayName?: string
   input: unknown
+  // --- derived for the approval panel ---
+  kind: PermissionKind
+  risk: PermissionRisk
+  /** Header pill label, e.g. `Bash` / `Write` / `MCP`. */
+  badge: string
+  /** Codicon class for the badge/command-block icon, e.g. `codicon-terminal`. */
+  badgeIcon: string
+  /** Risk chip label, e.g. `Destructive` / `Network` / `External`. */
+  riskLabel: string
+  /** Codicon class for the risk chip, e.g. `codicon-flame`. */
+  riskIcon: string
+  /** Uppercase label above the command block, e.g. `Bash command`. */
+  blockLabel: string
+  /** Exact command / path / URL / MCP call shown in the monospace block. */
+  command: string
+  /** Subtitle under the command (from the SDK bridge's `description`). */
+  description?: string
+  /** Amber/red warning box text (the SDK's `decisionReason` + `blockedPath`). */
+  note?: string
+  /** Longer rationale shown on the `^E` explain toggle; affordance hidden when absent. */
+  explain?: string
+  /** Whether the SDK offered "always allow" suggestions for this call. */
+  canAlways: boolean
+  /** Scope phrase for the always option, e.g. `this session` / `this project`. */
+  alwaysLabel?: string
 }
 
 /** Host → chat webview. */
@@ -182,7 +218,7 @@ export type ChatInbound =
   // Run a raw shell command (composer `!` prefix). Runs in the session's shell +
   // cwd; output is shown in the chat but not sent to Claude.
   | { type: 'runCommand'; sessionId: string; command: string }
-  | { type: 'permissionResponse'; sessionId: string; requestId: string; allow: boolean }
+  | { type: 'permissionResponse'; sessionId: string; requestId: string; decision: 'yes' | 'always' | 'no'; amend?: string }
   // AskUserQuestion answer: `answers` maps each question's text → the chosen
   // answer string (multi-select joined by `, `, custom free-text included).
   // `dismissed` resolves the tool without an answer (composer returns).

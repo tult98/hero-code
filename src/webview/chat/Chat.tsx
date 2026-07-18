@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, CommandInfo, FileHit, ModelChoice, PermissionRequest } from '../../chat/types.js'
 import { vscode } from './vscode-api.js'
 import { AskQuestionPanel } from './AskQuestionPanel.js'
+import { ApprovalPanel } from './ApprovalPanel.js'
 import { Message } from './Message.js'
 import { ModelPanel, type ModelPanelStatus } from './ModelPanel.js'
 
@@ -61,6 +62,12 @@ function modelLabel(raw?: string): string {
     const family = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase()
     const version = m[3] ? `${m[2]}.${m[3]}` : m[2]
     return `${family} ${version}`
+  }
+  // Bare family alias (e.g. a saved default of `opus`/`sonnet`), shown before the
+  // SDK reports the full resolved id — capitalize it rather than showing raw.
+  const alias = raw.match(/^(opus|sonnet|haiku|fable)$/i)
+  if (alias) {
+    return alias[1][0].toUpperCase() + alias[1].slice(1).toLowerCase()
   }
   return raw
 }
@@ -460,11 +467,11 @@ export function Chat() {
     setImages([])
   }
 
-  const respond = (allow: boolean) => {
+  const respondPermission = (decision: 'yes' | 'always' | 'no', amend?: string) => {
     if (!permission) {
       return
     }
-    vscode.postMessage({ type: 'permissionResponse', sessionId: permission.sessionId, requestId: permission.requestId, allow })
+    vscode.postMessage({ type: 'permissionResponse', sessionId: permission.sessionId, requestId: permission.requestId, decision, amend })
     setPermission(null)
   }
 
@@ -602,23 +609,9 @@ export function Chat() {
 
       {/* COMPOSER */}
       <div className='shrink-0 border-t border-(--vscode-panel-border,transparent) px-2.5 py-2'>
-        {permission && (
-          <div className='mb-2 rounded border border-(--vscode-inputValidation-warningBorder,transparent) bg-(--vscode-inputValidation-warningBackground) px-3 py-2 text-xs text-vs-fg'>
-            <div className='mb-1.5'>{permission.title ?? `Allow ${permission.displayName ?? permission.toolName}?`}</div>
-            <div className='flex gap-2'>
-              <button className='rounded px-2 py-0.5 bg-vs-accent text-black hover:opacity-90' onClick={() => respond(true)}>
-                Approve
-              </button>
-              <button className='rounded px-2 py-0.5 bg-(--vscode-button-secondaryBackground) text-(--vscode-button-secondaryForeground) hover:opacity-90' onClick={() => respond(false)}>
-                Deny
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Input card — swapped for the AskUserQuestion picker while Claude waits on a
-            decision. Only the composer input is replaced; the transcript above and the
-            session-facts footer below stay put. */}
+        {/* Input card — swapped for the AskUserQuestion picker or the tool-approval
+            panel while Claude waits on a decision. Only the composer input is replaced;
+            the transcript above and the session-facts footer below stay put. */}
         {ask ? (
           <AskQuestionPanel
             request={ask}
@@ -634,6 +627,12 @@ export function Chat() {
               }
               setAsk(null)
             }}
+          />
+        ) : permission ? (
+          <ApprovalPanel
+            request={permission}
+            onDecision={(decision, amend) => respondPermission(decision, amend)}
+            onDismiss={() => respondPermission('no')}
           />
         ) : (
         <div
