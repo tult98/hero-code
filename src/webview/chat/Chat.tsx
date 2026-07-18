@@ -510,6 +510,31 @@ export function Chat() {
   const menuLoading = !!menu && menu.kind === 'file' && fileHits.query !== menu.query
   const menuActive = menu ? Math.min(menu.active, Math.max(0, menuItems.length - 1)) : 0
 
+  // Shift+Tab cycles the live session's permission mode (like Claude Code).
+  // Bind it at the document level so it works whenever the chat view is focused,
+  // not only when the composer holds focus. A ref carries the latest guard state
+  // so the listener (bound once) never fires while a menu or overlay — each of
+  // which has its own Tab handling — is open.
+  const shortcutRef = useRef<{ sessionId: string | null; blocked: boolean }>({
+    sessionId: null,
+    blocked: false,
+  })
+  shortcutRef.current = {
+    sessionId,
+    blocked: !!(menu || modelPanel || ask || permission),
+  }
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || !e.shiftKey) return
+      const { sessionId, blocked } = shortcutRef.current
+      if (blocked || !sessionId) return
+      e.preventDefault()
+      vscode.postMessage({ type: 'cycleMode', sessionId })
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   if (!sessionId) {
     return (
       <div className='flex h-full items-center justify-center px-6 text-center text-vs-desc'>
@@ -822,12 +847,8 @@ export function Chat() {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 send()
-              } else if (e.key === 'Tab' && e.shiftKey) {
-                // Cycle the live session's permission mode, like Claude Code.
-                e.preventDefault()
-                if (sessionId) {
-                  vscode.postMessage({ type: 'cycleMode', sessionId })
-                }
+                // Shift+Tab (cycle permission mode) is handled by a document-level
+                // listener so it works whenever the chat view is focused.
               } else if (e.key === 'Escape' && busy) {
                 // Esc interrupts a running turn.
                 e.preventDefault()
