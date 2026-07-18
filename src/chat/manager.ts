@@ -409,6 +409,8 @@ interface ChatSession {
   permissionMode: string
   /** Git branch of `cwd`, computed once at start. */
   branch?: string
+  /** Uncommitted LOC changes vs HEAD; recomputed at start and each turn end. */
+  loc?: { added: number; removed: number }
   /** Percent of context window used (0–100), refreshed each turn. */
   contextPercent?: number
   /** Current reasoning effort level, when set via the `/model` panel. */
@@ -602,6 +604,7 @@ export class ChatSessionManager {
       askPending: new Map(),
       permissionMode: 'default',
       branch: gitBranch(cwd),
+      loc: gitLoc(cwd),
       // Seed the footer with the model/effort this chat will launch with (the
       // saved defaults handed to the SDK below), so a brand-new chat shows them
       // before the first turn instead of a bare "—".
@@ -641,6 +644,7 @@ export class ChatSessionManager {
       askPending: new Map(),
       permissionMode: 'default',
       branch: gitBranch(cwd),
+      loc: gitLoc(cwd),
       // Live model isn't reported until the first turn — seed from history so the
       // footer shows it right away on resume.
       model: lastAssistantModel(file),
@@ -973,6 +977,9 @@ export class ChatSessionManager {
       }
       case 'result': {
         this.setStatus(session, msg.subtype === 'success' ? 'idle' : 'error')
+        // A turn just ended → files may have changed; refresh the LOC counter.
+        session.loc = gitLoc(session.cwd)
+        this.emitMeta(session)
         // A turn just ended → context grew; refresh the footer's usage bar.
         void this.refreshContext(session)
         return
@@ -988,6 +995,7 @@ export class ChatSessionManager {
       model: session.model,
       permissionMode: session.permissionMode,
       branch: session.branch,
+      loc: session.loc,
       contextPercent: session.contextPercent,
       effort: session.effort,
     }
@@ -1191,6 +1199,34 @@ function gitBranch(cwd: string): string | undefined {
       stdio: ['ignore', 'pipe', 'ignore'],
     })
     return out.toString().trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Sum uncommitted line changes (staged + unstaged) vs HEAD via
+ * `git diff HEAD --numstat`. Returns `undefined` when not a repo, no HEAD yet,
+ * or git is missing.
+ */
+function gitLoc(cwd: string): { added: number; removed: number } | undefined {
+  try {
+    const out = execFileSync('git', ['diff', 'HEAD', '--numstat'], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString()
+    let added = 0
+    let removed = 0
+    for (const line of out.split('\n')) {
+      const [a, r] = line.split('\t') // "added\tremoved\tpath"; binary files use "-"
+      if (a && a !== '-') {
+        added += Number(a) || 0
+      }
+      if (r && r !== '-') {
+        removed += Number(r) || 0
+      }
+    }
+    return { added, removed }
   } catch {
     return undefined
   }

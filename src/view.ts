@@ -73,11 +73,12 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
 
   /**
    * Open a session on click. In terminal mode, always a terminal. In chat mode,
-   * coexist: a chat-owned session (or an idle one we can resume) opens in the
-   * chat panel; a session already backed by a terminal, or running live outside
-   * our control, opens in a terminal.
+   * every session opens in the GUI chat: a chat-owned session is revealed
+   * directly, any other session is resumed in the SDK-driven chat and revealed.
+   * A terminal is used only as a fallback when the session's folder is unknown
+   * (we can't seed an SDK resume without a cwd).
    */
-  private openSession(id: string, title?: string, liveId?: string, path?: string, running?: boolean): void {
+  private openSession(id: string, title?: string, liveId?: string, path?: string): void {
     if (!this.chatMode) {
       openSessionTerminal(id, title, liveId)
       return
@@ -87,9 +88,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     const target = liveId || id
     if (this.chat.has(target)) {
       this.chatView.show(target)
-    } else if (hasSessionTerminal(id)) {
-      openSessionTerminal(id, title, liveId)
-    } else if (!running && path) {
+    } else if (path) {
       void this.chat
         .resume(target, path)
         .then((sid) => this.chatView.show(sid))
@@ -175,7 +174,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
           this.postState()
         } else if (msg.type === 'open' && msg.id) {
           this.selected = msg.id
-          this.openSession(msg.id, msg.title, msg.liveId, msg.path, msg.running)
+          this.openSession(msg.id, msg.title, msg.liveId, msg.path)
         } else if (msg.type === 'newSession' && msg.path) {
           if (this.chatMode) {
             this.newChatSession(msg.path)

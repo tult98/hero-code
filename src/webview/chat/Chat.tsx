@@ -940,6 +940,15 @@ export function Chat() {
         <div className='flex items-center gap-1 mt-1.5 px-0.5 min-w-0 text-[10.5px] text-vs-desc'>
           <span className='codicon codicon-git-branch shrink-0' style={{ fontSize: '12px' }} />
           <span className='truncate'>{meta.branch ?? '—'}</span>
+          {meta.loc && (meta.loc.added > 0 || meta.loc.removed > 0) && (
+            <span
+              className='flex items-center gap-1.5 shrink-0 ml-1'
+              title='Uncommitted line changes vs HEAD'
+            >
+              {meta.loc.added > 0 && <span style={{ color: '#89d185' }}>+{meta.loc.added}</span>}
+              {meta.loc.removed > 0 && <span style={{ color: '#f14c4c' }}>−{meta.loc.removed}</span>}
+            </span>
+          )}
         </div>
       </div>
     </div>

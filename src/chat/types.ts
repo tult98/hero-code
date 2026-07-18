@@ -52,6 +52,8 @@ export interface ChatMeta {
   permissionMode?: string
   /** Git branch of the session cwd, e.g. `main`. */
   branch?: string
+  /** Uncommitted line changes vs HEAD (staged + unstaged), summed across files. */
+  loc?: { added: number; removed: number }
   /** Percent of the context window used, 0–100. */
   contextPercent?: number
   /** Current reasoning effort level (e.g. `high`), when set via the `/model` panel. */
