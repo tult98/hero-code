@@ -938,6 +938,18 @@ export function Chat() {
 
         {/* Git branch — its own row, matching the design. */}
         <div className='flex items-center gap-1 mt-1.5 px-0.5 min-w-0 text-[10.5px] text-vs-desc'>
+          {meta.folder && (
+            <>
+              <span
+                className='flex items-center gap-1 shrink min-w-0 max-w-[45%]'
+                title={meta.cwd ?? meta.folder}
+              >
+                <span className='codicon codicon-folder shrink-0' style={{ fontSize: '12px' }} />
+                <span className='truncate'>{meta.folder}</span>
+              </span>
+              <span className='shrink-0 opacity-60'>·</span>
+            </>
+          )}
           <span className='codicon codicon-git-branch shrink-0' style={{ fontSize: '12px' }} />
           <span className='truncate'>{meta.branch ?? '—'}</span>
           {meta.loc && (meta.loc.added > 0 || meta.loc.removed > 0) && (

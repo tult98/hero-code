@@ -54,6 +54,10 @@ export interface ChatMeta {
   branch?: string
   /** Uncommitted line changes vs HEAD (staged + unstaged), summed across files. */
   loc?: { added: number; removed: number }
+  /** Basename of the session cwd, e.g. `hero-code`. Shown next to the branch. */
+  folder?: string
+  /** Absolute session cwd; used as the folder hover tooltip. */
+  cwd?: string
   /** Percent of the context window used, 0–100. */
   contextPercent?: number
   /** Current reasoning effort level (e.g. `high`), when set via the `/model` panel. */

@@ -39,6 +39,8 @@ export interface SessionItem extends ParsedSession {
   pinned?: boolean
   /** Marked done; hidden from the active list, revealed under "Done". */
   done?: boolean
+  /** Name of the workspace folder this session belongs to. Shown in the row. */
+  folder?: string
 }
 
 /**
