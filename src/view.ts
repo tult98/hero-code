@@ -23,6 +23,18 @@ const CHAT_STATUS_TO_SIDEBAR: Record<ChatStatus, Status> = {
   idle: 'waiting',
 }
 
+/**
+ * Safety net for a "working" row whose live signal has gone stale: a genuinely
+ * working session writes to its transcript continuously, so a row still marked
+ * working long after its last write is a latched status (e.g. a chat session
+ * whose SDK `result` never arrived). Downgrade it to "waiting" past this window.
+ * Kept generous — longer than any single tool call that stops writing the
+ * transcript (a long build/test/research run) — so genuinely-working rows are
+ * never flipped; the manager's own self-heal handles the common cases well before
+ * this fires.
+ */
+const STALE_WORKING_MS = 5 * 60_000
+
 export class SessionsViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hero-code.sessions'
 
@@ -271,6 +283,20 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         const chatStatus = liveId ? this.chat.chatStatusOf(liveId) : undefined
         if (chatStatus) {
           session.status = CHAT_STATUS_TO_SIDEBAR[chatStatus]
+        }
+      }
+    }
+
+    // Final safety net: never present "working" for a row that hasn't written its
+    // transcript within the freshness window — a latched status (from the overlay
+    // or the filesystem `stopReason` fallback) rather than real activity. Only ever
+    // downgrade working → waiting; placeholders carry a fresh mtime so they're never
+    // caught here.
+    const now = Date.now()
+    for (const group of groups) {
+      for (const session of group.sessions) {
+        if (session.status === 'working' && now - session.mtime > STALE_WORKING_MS) {
+          session.status = 'waiting'
         }
       }
     }

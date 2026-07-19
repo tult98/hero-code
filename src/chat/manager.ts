@@ -56,7 +56,7 @@ type SdkMessage = {
   /** system/init and system/status carry these at the top level. */
   model?: string
   permissionMode?: string
-  message?: { content?: unknown; model?: string; usage?: unknown }
+  message?: { content?: unknown; model?: string; usage?: unknown; stop_reason?: string }
 }
 type SdkContextUsage = { percentage?: number; model?: string }
 /** SDK `SlashCommand` — covers both built-in slash commands and skills. */
@@ -932,6 +932,14 @@ export class ChatSessionManager {
       }
     } catch (err) {
       this.appendError(session, err instanceof Error ? err.message : String(err))
+    } finally {
+      // The message stream ended (subprocess exited/orphaned after a reload, or the
+      // stream closed without a final `result`). Any lingering live status can never
+      // advance now, so drop it to idle rather than leave the sidebar stuck on
+      // "Working". A terminal `error` (from the catch) is left as-is.
+      if (session.status === 'streaming' || session.status === 'awaiting-permission') {
+        this.setStatus(session, 'idle')
+      }
     }
   }
 
@@ -966,7 +974,20 @@ export class ChatSessionManager {
           session.messages.push(message)
           this.emit({ type: 'append', sessionId: session.id, message })
         }
-        this.setStatus(session, 'streaming')
+        // A terminal stop_reason (end_turn/stop_sequence/max_tokens/…) means the turn
+        // finished; self-heal to idle even if the SDK `result` message never lands
+        // (orphaned subprocess after a reload, dropped/hung stream) so the sidebar
+        // doesn't latch on "Working". `tool_use` (or an absent stop_reason on a
+        // partial streaming chunk) means work is still in progress → stay streaming.
+        // Never override a parked permission/question prompt (awaiting-permission):
+        // those are always preceded by a `tool_use` message, so this branch can't
+        // race them, but guard on the pending maps as belt-and-suspenders.
+        const sr = msg.message?.stop_reason
+        if (sr && sr !== 'tool_use' && session.pending.size === 0 && session.askPending.size === 0) {
+          this.setStatus(session, 'idle')
+        } else {
+          this.setStatus(session, 'streaming')
+        }
         return
       }
       case 'user': {
@@ -996,6 +1017,8 @@ export class ChatSessionManager {
       permissionMode: session.permissionMode,
       branch: session.branch,
       loc: session.loc,
+      folder: path.basename(session.cwd),
+      cwd: session.cwd,
       contextPercent: session.contextPercent,
       effort: session.effort,
     }
