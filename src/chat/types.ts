@@ -28,6 +28,15 @@ export interface ChatToolUseBlock {
   status: 'pending' | 'allowed' | 'denied' | 'done' | 'error'
   /** tool_result text once the tool has run (trimmed for display). */
   result?: string
+  /**
+   * For sub-agent calls (the `Agent` / `Task` tool): the sub-agent's own
+   * transcript, rendered nested inside the card. Populated on resume from the
+   * `<sessionId>/subagents/agent-*.jsonl` files, and live from SDK messages whose
+   * `parent_tool_use_id` points at this block's `id`.
+   */
+  steps?: ChatMessage[]
+  /** Sub-agent kind shown as the card chip, e.g. `code-reviewer` (from `subagent_type` / meta `agentType`). */
+  agentType?: string
 }
 
 export type ChatBlock = ChatTextBlock | ChatToolUseBlock

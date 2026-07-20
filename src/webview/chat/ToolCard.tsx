@@ -3,6 +3,7 @@ import type { ChatToolUseBlock } from '../../chat/types.js'
 import { CodeBlock } from './CodeBlock.js'
 import { DiffView, computeDiff } from './DiffView.js'
 import { Markdown } from './Markdown.js'
+import { SubAgentCard } from './SubAgentCard.js'
 
 /** Codicon per tool name (falls back to a generic wrench). */
 const TOOL_ICON: Record<string, string> = {
@@ -16,6 +17,7 @@ const TOOL_ICON: Record<string, string> = {
   Glob: 'search',
   TodoWrite: 'checklist',
   Task: 'organization',
+  Agent: 'organization',
   WebFetch: 'globe',
   WebSearch: 'search',
   AskUserQuestion: 'comment-discussion',
@@ -28,7 +30,7 @@ interface TodoItem {
 }
 
 /** Right-aligned lifecycle indicator. */
-function StatusIcon({ status }: { status: ChatToolUseBlock['status'] }) {
+export function StatusIcon({ status }: { status: ChatToolUseBlock['status'] }) {
   switch (status) {
     case 'allowed':
       return <span className='codicon codicon-loading codicon-modifier-spin text-[13px] text-vs-accent' />
@@ -53,6 +55,11 @@ function langFromPath(file?: string): string | undefined {
 
 /** One tool call: a collapsible card whose body is tailored to the tool. */
 export function ToolCard({ block }: { block: ChatToolUseBlock }) {
+  // Sub-agent calls get their own violet, nested-transcript card.
+  if (block.name === 'Agent' || block.name === 'Task') {
+    return <SubAgentCard block={block} />
+  }
+
   const input = (block.input ?? {}) as Record<string, unknown>
   const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
@@ -64,7 +71,7 @@ export function ToolCard({ block }: { block: ChatToolUseBlock }) {
   const isPlan = block.name === 'ExitPlanMode' && !!str(input.plan)
 
   // Does this card have anything to reveal?
-  const hasBody = hasDiff || !!todos || isPlan || !!block.result || !!str(input.content) || block.name === 'Task'
+  const hasBody = hasDiff || !!todos || isPlan || !!block.result || !!str(input.content)
   const defaultOpen = block.name === 'Bash' || isEdit || block.name === 'TodoWrite' || isPlan
   const [open, setOpen] = useState(defaultOpen)
 
@@ -120,8 +127,6 @@ export function ToolCard({ block }: { block: ChatToolUseBlock }) {
             <div className='px-3 py-2'>
               <Markdown text={str(input.plan) as string} />
             </div>
-          ) : block.name === 'Task' ? (
-            <TaskBody input={input} result={block.result} />
           ) : block.result ? (
             <pre
               className={`max-h-52 overflow-auto whitespace-pre-wrap px-2.5 py-2 font-mono text-[11px] ${
@@ -160,19 +165,3 @@ function TodoList({ todos }: { todos: TodoItem[] }) {
   )
 }
 
-function TaskBody({ input, result }: { input: Record<string, unknown>; result?: string }) {
-  const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
-  const agent = str(input.subagent_type)
-  const prompt = str(input.prompt) ?? str(input.description)
-  return (
-    <div className='flex flex-col gap-2 px-3 py-2'>
-      {agent && (
-        <span className='w-fit rounded bg-black/20 px-1.5 py-0.5 font-mono text-[11px] text-vs-desc'>{agent}</span>
-      )}
-      {prompt && <div className='text-[12px] leading-relaxed text-vs-desc'>{prompt}</div>}
-      {result && (
-        <pre className='max-h-52 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-vs-desc'>{result}</pre>
-      )}
-    </div>
-  )
-}

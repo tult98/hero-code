@@ -53,6 +53,8 @@ type SdkMessage = {
   subtype?: string
   session_id?: string
   uuid?: string
+  /** Set to the parent `Agent`/`Task` tool_use id on a sub-agent's own turns; null/absent at top level. */
+  parent_tool_use_id?: string | null
   /** system/init and system/status carry these at the top level. */
   model?: string
   permissionMode?: string
@@ -649,14 +651,21 @@ export class ChatSessionManager {
       // footer shows it right away on resume.
       model: lastAssistantModel(file),
     }
-    // Index history tool cards so later live tool_results can attach to them.
-    for (const message of session.messages) {
-      for (const block of message.blocks) {
-        if (block.type === 'tool_use') {
-          session.toolCards.set(block.id, block)
+    // Index history tool cards (including nested sub-agent steps) so later live
+    // tool_results can attach to them.
+    const indexCards = (messages: ChatMessage[]): void => {
+      for (const message of messages) {
+        for (const block of message.blocks) {
+          if (block.type === 'tool_use') {
+            session.toolCards.set(block.id, block)
+            if (block.steps) {
+              indexCards(block.steps)
+            }
+          }
         }
       }
     }
+    indexCards(session.messages)
     this.sessions.set(id, session)
     session.query = query({
       prompt: session.queue,
@@ -970,6 +979,20 @@ export class ChatSessionManager {
           this.emitMeta(session)
         }
         const message = this.renderAssistant(session, msg)
+        // Sub-agent (Agent/Task) turns carry the parent tool_use id: nest them
+        // inside that card's `steps` and refresh the top-level message that owns
+        // it, rather than pushing them as a top-level turn.
+        const parentId = msg.parent_tool_use_id
+        if (parentId) {
+          const parent = session.toolCards.get(parentId)
+          if (parent && message.blocks.length) {
+            parent.steps = parent.steps ?? []
+            parent.steps.push(message)
+            this.emit({ type: 'update', sessionId: session.id, message: this.messageOfCard(session, parent) })
+          }
+          this.setStatus(session, 'streaming')
+          return
+        }
         if (message.blocks.length) {
           session.messages.push(message)
           this.emit({ type: 'append', sessionId: session.id, message })
@@ -1096,6 +1119,12 @@ export class ChatSessionManager {
           input: block.input,
           status: 'pending',
         }
+        if (name === 'Agent' || name === 'Task') {
+          const subType = (block.input as { subagent_type?: unknown } | undefined)?.subagent_type
+          if (typeof subType === 'string') {
+            card.agentType = subType
+          }
+        }
         session.toolCards.set(card.id, card)
         blocks.push(card)
       }
@@ -1168,9 +1197,17 @@ export class ChatSessionManager {
     })
   }
 
-  /** Wrap an updated card as an `update` message the webview can splice in by id. */
+  /**
+   * Wrap an updated card as an `update` message the webview can splice in by id.
+   * Searches nested sub-agent `steps` too, so a card living inside a sub-agent
+   * thread still resolves to its top-level owner message.
+   */
   private messageOfCard(session: ChatSession, card: ChatToolUseBlock): ChatMessage {
-    const owner = session.messages.find((m) => m.blocks.includes(card))
+    const owns = (blocks: ChatMessage['blocks']): boolean =>
+      blocks.some(
+        (b) => b === card || (b.type === 'tool_use' && !!b.steps && b.steps.some((m) => owns(m.blocks))),
+      )
+    const owner = session.messages.find((m) => owns(m.blocks))
     return owner ?? { id: card.id, role: 'assistant', blocks: [card] }
   }
 

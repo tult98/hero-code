@@ -34,7 +34,8 @@ export function describeTool(name: string, input: ToolInput | undefined): string
     case 'Glob':
       return i.pattern ? `${name} · ${i.pattern}` : name
     case 'Task':
-      return i.description ? `Task · ${i.description}` : 'Task'
+    case 'Agent':
+      return i.description ? `${name} · ${i.description}` : name
     case 'AskUserQuestion': {
       const headers = (i.questions ?? []).map((q) => q.header).filter(Boolean)
       return headers.length ? `AskUserQuestion · ${headers.join(', ')}` : 'AskUserQuestion'
@@ -197,8 +198,14 @@ export function lastAssistantModel(filePath: string): string | undefined {
  * when opening an existing (idle) session in the GUI chat. This is a fuller
  * read than `parseSession` (which only extracts a title): it emits user text,
  * assistant text, and tool-use cards, and attaches each tool_result back onto
- * its tool_use block. Sub-agent (sidechain) turns are excluded to keep the main
- * conversation clean.
+ * its tool_use block.
+ *
+ * Sub-agent (`Agent` / `Task`) work is not inline in this file. Current Claude
+ * Code writes each sub-agent's transcript to a sibling
+ * `<sessionId>/subagents/agent-<id>.jsonl` (+ a `.meta.json` whose `toolUseId`
+ * links it to the parent tool_use); we load those and hang them off the parent
+ * card as `steps`. Legacy inline sidechain turns are dropped from the main
+ * conversation (they'd otherwise duplicate the sub-agent thread).
  */
 export function parseTranscriptMessages(filePath: string): ChatMessage[] {
   let content: string
@@ -207,7 +214,18 @@ export function parseTranscriptMessages(filePath: string): ChatMessage[] {
   } catch {
     return []
   }
+  const messages = parseMessagesFromContent(content, false)
+  attachSubAgents(messages, subAgentIndex(filePath))
+  return messages
+}
 
+/**
+ * Parse the raw text of a transcript `.jsonl` into ordered chat messages. Shared
+ * by the main transcript and each sub-agent transcript. `includeSidechain` is
+ * false for the main file (its inline sidechain turns, if any, are legacy noise)
+ * and true for a sub-agent file, whose every turn is a sidechain turn.
+ */
+function parseMessagesFromContent(content: string, includeSidechain: boolean): ChatMessage[] {
   const messages: ChatMessage[] = []
   // tool_use id → its rendered block, so a later tool_result can update it.
   const toolBlocks = new Map<string, ChatToolUseBlock>()
@@ -223,7 +241,10 @@ export function parseTranscriptMessages(filePath: string): ChatMessage[] {
     } catch {
       continue
     }
-    if (entry.isSidechain || (entry.type !== 'user' && entry.type !== 'assistant')) {
+    if (entry.type !== 'user' && entry.type !== 'assistant') {
+      continue
+    }
+    if (entry.isSidechain && !includeSidechain) {
       continue
     }
 
@@ -287,4 +308,80 @@ export function parseTranscriptMessages(filePath: string): ChatMessage[] {
   }
 
   return messages
+}
+
+interface SubAgentMeta {
+  agentType?: string
+  /** Absolute path to the sub-agent's own `agent-<id>.jsonl` transcript. */
+  file: string
+}
+
+/**
+ * Index the sub-agent transcripts stored next to the main file: read every
+ * `<sessionId>/subagents/*.meta.json` and key it by `toolUseId` (the parent
+ * `Agent`/`Task` tool_use id). Returns an empty map when there are none.
+ */
+function subAgentIndex(mainFile: string): Map<string, SubAgentMeta> {
+  const index = new Map<string, SubAgentMeta>()
+  const subDir = path.join(mainFile.replace(/\.jsonl$/, ''), 'subagents')
+  let names: string[]
+  try {
+    names = fs.readdirSync(subDir)
+  } catch {
+    return index
+  }
+  for (const name of names) {
+    if (!name.endsWith('.meta.json')) {
+      continue
+    }
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(subDir, name), 'utf8')) as {
+        agentType?: string
+        toolUseId?: string
+      }
+      if (typeof meta.toolUseId !== 'string') {
+        continue
+      }
+      index.set(meta.toolUseId, {
+        agentType: meta.agentType,
+        file: path.join(subDir, name.replace(/\.meta\.json$/, '.jsonl')),
+      })
+    } catch {
+      continue
+    }
+  }
+  return index
+}
+
+/**
+ * Walk the message tree and, for every `Agent`/`Task` tool card that has a
+ * matching sub-agent transcript, parse that transcript and hang it off the card
+ * as `steps` (recursing so nested sub-agents, `spawnDepth > 1`, thread too).
+ */
+function attachSubAgents(messages: ChatMessage[], index: Map<string, SubAgentMeta>): void {
+  if (index.size === 0) {
+    return
+  }
+  for (const message of messages) {
+    for (const block of message.blocks) {
+      if (block.type !== 'tool_use' || (block.name !== 'Agent' && block.name !== 'Task')) {
+        continue
+      }
+      const meta = index.get(block.id)
+      if (!meta) {
+        continue
+      }
+      const subType = (block.input as { subagent_type?: unknown } | undefined)?.subagent_type
+      block.agentType = (typeof subType === 'string' ? subType : undefined) ?? meta.agentType
+      let text: string
+      try {
+        text = fs.readFileSync(meta.file, 'utf8')
+      } catch {
+        continue
+      }
+      const steps = parseMessagesFromContent(text, true)
+      attachSubAgents(steps, index)
+      block.steps = steps
+    }
+  }
 }
