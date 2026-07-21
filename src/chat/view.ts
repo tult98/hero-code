@@ -94,7 +94,7 @@ export class ChatView implements vscode.WebviewViewProvider {
         manager.runCommand(msg.sessionId, msg.command)
         return
       case 'permissionResponse':
-        manager.respondPermission(msg.requestId, msg.decision, msg.amend)
+        manager.respondPermission(msg.requestId, msg.decision, msg.amend, msg.mode)
         return
       case 'answerQuestion':
         manager.respondQuestion(msg.requestId, msg.answers, msg.dismissed)

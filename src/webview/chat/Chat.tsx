@@ -3,6 +3,7 @@ import type { AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, Ch
 import { vscode } from './vscode-api.js'
 import { AskQuestionPanel } from './AskQuestionPanel.js'
 import { ApprovalPanel } from './ApprovalPanel.js'
+import { PlanApprovalPanel } from './PlanApprovalPanel.js'
 import { Message } from './Message.js'
 import { ModelPanel, type ModelPanelStatus } from './ModelPanel.js'
 
@@ -467,11 +468,11 @@ export function Chat() {
     setImages([])
   }
 
-  const respondPermission = (decision: 'yes' | 'always' | 'no', amend?: string) => {
+  const respondPermission = (decision: 'yes' | 'always' | 'no', amend?: string, mode?: 'auto' | 'acceptEdits') => {
     if (!permission) {
       return
     }
-    vscode.postMessage({ type: 'permissionResponse', sessionId: permission.sessionId, requestId: permission.requestId, decision, amend })
+    vscode.postMessage({ type: 'permissionResponse', sessionId: permission.sessionId, requestId: permission.requestId, decision, amend, mode })
     setPermission(null)
   }
 
@@ -654,11 +655,19 @@ export function Chat() {
             }}
           />
         ) : permission ? (
-          <ApprovalPanel
-            request={permission}
-            onDecision={(decision, amend) => respondPermission(decision, amend)}
-            onDismiss={() => respondPermission('no')}
-          />
+          permission.kind === 'plan' ? (
+            <PlanApprovalPanel
+              request={permission}
+              onDecision={(decision, amend, mode) => respondPermission(decision, amend, mode)}
+              onDismiss={() => respondPermission('no')}
+            />
+          ) : (
+            <ApprovalPanel
+              request={permission}
+              onDecision={(decision, amend) => respondPermission(decision, amend)}
+              onDismiss={() => respondPermission('no')}
+            />
+          )
         ) : (
         <div
           className='relative flex flex-col gap-[7px] rounded-[11px] border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-2.5 py-2 focus-within:border-vs-accent'

@@ -318,6 +318,7 @@ function describePermission(
   let riskIcon = 'codicon-shield'
   let blockLabel = 'Tool call'
   let command = ''
+  let planMarkdown: string | undefined
 
   if (toolName === 'Bash') {
     kind = 'bash'
@@ -355,6 +356,15 @@ function describePermission(
     const server = parts[0] || 'mcp'
     const tool = parts.slice(1).join('__') || 'call'
     command = `${server}.${tool}(${compactArgs(input)})`
+  } else if (toolName === 'ExitPlanMode') {
+    kind = 'plan'
+    risk = 'low'
+    badge = 'Plan'
+    badgeIcon = 'codicon-checklist'
+    riskLabel = 'Plan'
+    riskIcon = 'codicon-checklist'
+    blockLabel = 'Plan'
+    planMarkdown = str(input.plan) ?? ''
   } else {
     command = str(input.command) ?? str(input.file_path) ?? str(input.url) ?? compactJson(input)
   }
@@ -388,6 +398,7 @@ function describePermission(
     explain: prettyInput(input),
     canAlways,
     alwaysLabel: canAlways ? alwaysScope(opts.suggestions) : undefined,
+    planMarkdown,
   }
 }
 
@@ -795,7 +806,7 @@ export class ChatSessionManager {
   }
 
   /** Resolve a parked tool-permission prompt with the user's choice. */
-  respondPermission(requestId: string, decision: 'yes' | 'always' | 'no', amend?: string): void {
+  respondPermission(requestId: string, decision: 'yes' | 'always' | 'no', amend?: string, mode?: 'auto' | 'acceptEdits'): void {
     for (const session of this.sessions.values()) {
       const pending = session.pending.get(requestId)
       if (!pending) {
@@ -817,15 +828,19 @@ export class ChatSessionManager {
           updatedInput: card ? (card.input as Record<string, unknown>) : {},
           ...(decision === 'always' && pending.suggestions?.length ? { updatedPermissions: pending.suggestions } : {}),
         })
-        // Approving a plan should hand off to `auto`, not the SDK's default of
-        // `acceptEdits`. Set it explicitly so our value wins over the status echo.
+        // Approving a plan hands off to the mode the user picked (`auto` or
+        // `acceptEdits`), not the SDK's default. Set it explicitly so our value
+        // wins over the status echo.
         if (pending.request.toolName === 'ExitPlanMode') {
-          session.permissionMode = 'auto'
+          const next = mode ?? 'auto'
+          session.permissionMode = next
           this.emitMeta(session)
-          void session.query?.setPermissionMode('auto').catch(() => undefined)
+          void session.query?.setPermissionMode(next).catch(() => undefined)
         }
       } else {
-        pending.resolve({ behavior: 'deny', message: 'Denied by the user.' })
+        // A denial may carry feedback (plan "Tell Claude what to change"): return it
+        // as the tool_result so Claude revises inline instead of just stopping.
+        pending.resolve({ behavior: 'deny', message: amend?.trim() || 'Denied by the user.' })
       }
       this.setStatus(session, 'streaming')
       // An amend note rides along with an approval as the next user turn.

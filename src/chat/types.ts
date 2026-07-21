@@ -156,7 +156,7 @@ export interface AskQuestionRequest {
 }
 
 /** Coarse tool family the approval panel styles itself around. */
-export type PermissionKind = 'bash' | 'write' | 'fetch' | 'mcp' | 'generic'
+export type PermissionKind = 'bash' | 'write' | 'fetch' | 'mcp' | 'plan' | 'generic'
 
 /** Risk band: `high` flips the panel accent red, everything else amber. */
 export type PermissionRisk = 'high' | 'med' | 'low'
@@ -201,6 +201,8 @@ export interface PermissionRequest {
   canAlways: boolean
   /** Scope phrase for the always option, e.g. `this session` / `this project`. */
   alwaysLabel?: string
+  /** Raw plan markdown for `kind: 'plan'` (`ExitPlanMode`); rendered instead of the command block. */
+  planMarkdown?: string
 }
 
 /** Host → chat webview. */
@@ -233,7 +235,7 @@ export type ChatInbound =
   // Run a raw shell command (composer `!` prefix). Runs in the session's shell +
   // cwd; output is shown in the chat but not sent to Claude.
   | { type: 'runCommand'; sessionId: string; command: string }
-  | { type: 'permissionResponse'; sessionId: string; requestId: string; decision: 'yes' | 'always' | 'no'; amend?: string }
+  | { type: 'permissionResponse'; sessionId: string; requestId: string; decision: 'yes' | 'always' | 'no'; amend?: string; mode?: 'auto' | 'acceptEdits' }
   // AskUserQuestion answer: `answers` maps each question's text → the chosen
   // answer string (multi-select joined by `, `, custom free-text included).
   // `dismissed` resolves the tool without an answer (composer returns).

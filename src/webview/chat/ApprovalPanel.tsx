@@ -57,8 +57,8 @@ interface Opt {
 
 interface ApprovalPanelProps {
   request: PermissionRequest
-  /** Resolve the parked tool call; `amend` (Yes only) is queued as the next user turn. */
-  onDecision: (decision: 'yes' | 'always' | 'no', amend?: string) => void
+  /** Resolve the parked tool call; `amend` (Yes only) is queued as the next user turn. `mode` is unused here (plan-only). */
+  onDecision: (decision: 'yes' | 'always' | 'no', amend?: string, mode?: 'auto' | 'acceptEdits') => void
   /** Dismiss without approving — resolves as a denial and returns the composer. */
   onDismiss: () => void
 }
