@@ -127,6 +127,7 @@ export function ApprovalPanel({ request, onDecision, onDismiss }: ApprovalPanelP
     }
     if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       if (inInput) {
         amendRef.current?.blur()
         rootRef.current?.focus()

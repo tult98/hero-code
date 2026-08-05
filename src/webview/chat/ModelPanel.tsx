@@ -111,6 +111,7 @@ export function ModelPanel({ status, models, currentValue, defaultValue, current
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       onClose()
       return
     }

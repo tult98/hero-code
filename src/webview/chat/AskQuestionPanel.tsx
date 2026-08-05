@@ -226,6 +226,7 @@ export function AskQuestionPanel({ request, onSubmit, onDismiss }: AskQuestionPa
 
     if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       if (inInput) {
         leaveInput()
       } else {

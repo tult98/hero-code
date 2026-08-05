@@ -87,6 +87,48 @@ export interface ModelChoice {
   effortLevels: string[]
 }
 
+/** Live connection state of an MCP server (mirrors the SDK's `McpServerStatus.status`). */
+export type McpStatus = 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
+
+/** One tool exposed by an MCP server, with the annotation flags the detail view chips. */
+export interface McpToolInfo {
+  name: string
+  /** From `annotations.readOnly` — tags the tool as read-only. */
+  readOnly: boolean
+  /** From `annotations.destructive` — tags the tool as destructive. */
+  destructive: boolean
+}
+
+/**
+ * One MCP server row in the `/mcp` panel, derived host-side from the SDK's
+ * `mcpServerStatus()` so the panel stays a pure view. `scope`/`scopeLabel`/`scopePath`
+ * group and caption rows; `kind` picks the endpoint label (URL / Command / Provider).
+ */
+export interface McpServerInfo {
+  name: string
+  status: McpStatus
+  /** Raw scope id from the SDK, e.g. `project` / `user` / `claudeai` / `managed` / `local`. */
+  scope: string
+  /** Human group label, e.g. `Project`. */
+  scopeLabel: string
+  /** Config location caption, e.g. `./.mcp.json`. */
+  scopePath: string
+  /** URL-based (sse/http), command-based (stdio), or built-in provider. */
+  kind: 'url' | 'cmd' | 'builtin'
+  /** URL, command line, or provider string shown under the endpoint label. */
+  endpoint: string
+  /** Server version from `serverInfo.version`, when connected. */
+  version?: string
+  /** Error text for `failed` servers (from the SDK). */
+  error?: string
+  /** Tool count, or `null` while pending / discovering. */
+  toolCount: number | null
+  tools: McpToolInfo[]
+}
+
+/** Action the `/mcp` panel fires on a server (all fire-and-forget, optimistic UI). */
+export type McpAction = 'enable' | 'disable' | 'reconnect' | 'authenticate'
+
 /**
  * A pasted/dropped image attached to a user turn. The `[Image #N]` token shown in
  * the composer is plain text in the turn; the bytes travel here and are sent to
@@ -100,13 +142,15 @@ export interface ChatImageAttachment {
 }
 
 /**
- * A workspace file match for the composer's `@` file-reference menu. `rel` is the
- * path relative to the session cwd (inserted as `@<rel> `); `name` is its basename,
- * shown as the primary label.
+ * A workspace file/folder match for the composer's `@` file-reference menu. `rel` is
+ * the path relative to the session cwd (inserted as `@<rel> `, or `@<rel>/ ` for a
+ * folder); `name` is its basename, shown as the primary label. `isDirectory` marks a
+ * folder so the menu can show a folder icon and append a trailing slash.
  */
 export interface FileHit {
   rel: string
   name: string
+  isDirectory?: boolean
 }
 
 /**
@@ -227,6 +271,9 @@ export type ChatOutbound =
   // `/model` picker catalog. `status` drives the panel's ready/empty/error views;
   // `currentValue` marks the live session model, `defaultValue` the saved default.
   | { type: 'models'; sessionId: string; status: 'ready' | 'empty' | 'error'; models: ModelChoice[]; currentValue?: string; defaultValue?: string; error?: string }
+  // `/mcp` panel server list. `status` drives the panel's ready/empty/error views;
+  // re-sent after an action so the panel reflects the optimistic status flip.
+  | { type: 'mcpServers'; sessionId: string; status: 'ready' | 'empty' | 'error'; servers: McpServerInfo[]; error?: string }
 
 /** Chat webview → host. */
 export type ChatInbound =
@@ -249,3 +296,5 @@ export type ChatInbound =
   // choice as the new default (persisted, new sessions) or for this session only.
   | { type: 'listModels'; sessionId: string; refresh?: boolean }
   | { type: 'applyModel'; sessionId: string; value: string; effort?: string; scope: 'default' | 'session' }
+  | { type: 'listMcp'; sessionId: string; refresh?: boolean }
+  | { type: 'mcpAction'; sessionId: string; name: string; action: McpAction }

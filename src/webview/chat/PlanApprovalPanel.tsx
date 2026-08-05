@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import type { PermissionRequest } from '../../chat/types.js'
-import { Markdown } from './Markdown.js'
 
 /**
  * Plan-approval prompt — the webview counterpart of the terminal's `ExitPlanMode`
@@ -56,14 +54,13 @@ const OPTIONS: Opt[] = [
 ]
 
 interface PlanApprovalPanelProps {
-  request: PermissionRequest
   /** Resolve the parked `ExitPlanMode` call. `auto`/`acceptEdits` approve; `no` + `amend` denies with feedback. */
   onDecision: (decision: 'yes' | 'always' | 'no', amend?: string, mode?: 'auto' | 'acceptEdits') => void
   /** Dismiss without approving — resolves as a denial and returns the composer. */
   onDismiss: () => void
 }
 
-export function PlanApprovalPanel({ request, onDecision, onDismiss }: PlanApprovalPanelProps) {
+export function PlanApprovalPanel({ onDecision, onDismiss }: PlanApprovalPanelProps) {
   const [cursor, setCursor] = useState(0)
   const [telling, setTelling] = useState(false)
   const [feedback, setFeedback] = useState('')
@@ -98,6 +95,7 @@ export function PlanApprovalPanel({ request, onDecision, onDismiss }: PlanApprov
     const inInput = (e.target as HTMLElement).tagName?.toLowerCase() === 'textarea'
     if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       if (inInput) {
         feedbackRef.current?.blur()
         rootRef.current?.focus()
@@ -176,12 +174,7 @@ export function PlanApprovalPanel({ request, onDecision, onDismiss }: PlanApprov
       </div>
 
       {/* BODY */}
-      <div style={{ flex: '0 0 auto', maxHeight: '360px', overflowY: 'auto', overflowX: 'hidden', padding: '11px 12px 4px' }}>
-        {/* PLAN MARKDOWN */}
-        <div style={{ border: `1px solid ${T.bd}`, borderLeft: `2px solid ${T.ac}`, borderRadius: '8px', background: T.codeBg, padding: '9px 12px', marginBottom: '11px' }}>
-          {request.planMarkdown ? <Markdown text={request.planMarkdown} /> : <span style={{ color: T.fgM }}>Claude is ready to execute its plan.</span>}
-        </div>
-
+      <div style={{ flex: '0 0 auto', overflowY: 'auto', overflowX: 'hidden', padding: '11px 12px 4px' }}>
         {/* PROMPT */}
         <div style={{ fontSize: '12.5px', fontWeight: 600, color: T.fg, marginBottom: '6px' }}>Claude has written up a plan and is ready to execute. Would you like to proceed?</div>
 

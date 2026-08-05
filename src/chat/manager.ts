@@ -5,7 +5,7 @@ import { execFileSync, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import * as vscode from 'vscode'
-import type { AskQuestionItem, AskQuestionOption, AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, ModelChoice, PermissionKind, PermissionRequest, PermissionRisk } from './types.js'
+import type { AskQuestionItem, AskQuestionOption, AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, McpAction, McpServerInfo, McpStatus, ModelChoice, PermissionKind, PermissionRequest, PermissionRisk } from './types.js'
 import { describeTool, encodeProjectPath, lastAssistantModel, parseTranscriptMessages } from '../transcript.js'
 import type { ToolInput } from '../types.js'
 
@@ -72,6 +72,16 @@ type SdkModelInfo = {
   supportsEffort?: boolean
   supportedEffortLevels?: string[]
 }
+/** Subset of the SDK's `McpServerStatus` (sdk.d.ts) that the `/mcp` panel consumes. */
+interface SdkMcpServerStatus {
+  name: string
+  status: McpStatus
+  serverInfo?: { name: string; version: string }
+  error?: string
+  config?: { type?: string; url?: string; command?: string; args?: string[] }
+  scope?: string
+  tools?: { name: string; description?: string; annotations?: { readOnly?: boolean; destructive?: boolean } }[]
+}
 interface SdkQuery extends AsyncIterable<SdkMessage> {
   interrupt(): Promise<unknown>
   close(): void
@@ -85,6 +95,12 @@ interface SdkQuery extends AsyncIterable<SdkMessage> {
   setModel(model?: string): Promise<void>
   /** Merge settings into the flag layer mid-session (e.g. `{ effortLevel }`). */
   applyFlagSettings(settings: Record<string, unknown>): Promise<void>
+  /** Current status of all configured MCP servers (the `/mcp` list). */
+  mcpServerStatus(): Promise<SdkMcpServerStatus[]>
+  /** Enable/disable a configured MCP server at runtime. */
+  toggleMcpServer(serverName: string, enabled: boolean): Promise<void>
+  /** Reconnect a configured MCP server (also drives the auth flow for `needs-auth`). */
+  reconnectMcpServer(serverName: string): Promise<void>
 }
 type SdkModule = { query: (params: { prompt: string | AsyncIterable<SdkUserMessage>; options?: SdkOptions }) => SdkQuery }
 
@@ -432,6 +448,8 @@ interface ChatSession {
   commands?: CommandInfo[]
   /** Cached model catalog (from the SDK), populated on first `/model` panel open. */
   models?: ModelChoice[]
+  /** Cached MCP server list (from the SDK), populated on first `/mcp` panel open. */
+  mcpServers?: McpServerInfo[]
 }
 
 /**
@@ -596,6 +614,122 @@ export class ChatSessionManager {
       await cfg.update('defaultEffort', effort, vscode.ConfigurationTarget.Global)
     }
     this.useModelForSession(id, value, effort)
+  }
+
+  /** Scope id → group label + config-location caption for the `/mcp` list. */
+  private static readonly MCP_SCOPES: Record<string, { label: string; path: string }> = {
+    project: { label: 'Project', path: './.mcp.json' },
+    user: { label: 'User', path: '~/.claude.json' },
+    local: { label: 'Local', path: '~/.claude.json (local)' },
+    claudeai: { label: 'Claude.ai', path: 'claude.ai › Settings › Connectors' },
+    managed: { label: 'Managed', path: 'managed-settings.json' },
+    'built-in': { label: 'Built-in', path: 'bundled with Claude Code' },
+    builtin: { label: 'Built-in', path: 'bundled with Claude Code' },
+  }
+
+  /** Shape one SDK `McpServerStatus` into the panel's `McpServerInfo`. */
+  private mapMcpServer(s: SdkMcpServerStatus): McpServerInfo {
+    const scope = s.scope ?? 'project'
+    const meta = ChatSessionManager.MCP_SCOPES[scope] ?? { label: scope.charAt(0).toUpperCase() + scope.slice(1), path: '' }
+    const cfg = s.config ?? {}
+    let kind: McpServerInfo['kind']
+    let endpoint: string
+    if (cfg.url) {
+      kind = 'url'
+      endpoint = cfg.url
+    } else if (cfg.command) {
+      kind = 'cmd'
+      endpoint = [cfg.command, ...(cfg.args ?? [])].join(' ')
+    } else {
+      kind = 'builtin'
+      endpoint = s.serverInfo?.name ?? 'built-in provider'
+    }
+    const tools = (s.tools ?? []).map((t) => ({
+      name: t.name,
+      readOnly: !!t.annotations?.readOnly,
+      destructive: !!t.annotations?.destructive,
+    }))
+    return {
+      name: s.name,
+      status: s.status,
+      scope,
+      scopeLabel: meta.label,
+      scopePath: meta.path,
+      kind,
+      endpoint,
+      version: s.serverInfo?.version,
+      error: s.error,
+      toolCount: s.status === 'pending' ? null : tools.length,
+      tools,
+    }
+  }
+
+  /**
+   * Fetch the MCP server list for the `/mcp` panel. Mirrors {@link listModels}:
+   * cached per session (skip cache with `refresh`), maps the SDK status into the
+   * panel's shape, and returns the ready / empty / error view the panel renders.
+   */
+  async listMcpServers(
+    id: string,
+    refresh = false,
+  ): Promise<{ status: 'ready' | 'empty' | 'error'; servers: McpServerInfo[]; error?: string }> {
+    const session = this.sessions.get(id)
+    if (!session?.query) {
+      return { status: 'error', servers: [], error: 'Session is not running.' }
+    }
+    let servers = refresh ? undefined : session.mcpServers
+    if (!servers) {
+      try {
+        const raw = await session.query.mcpServerStatus()
+        servers = raw.map((s) => this.mapMcpServer(s))
+        session.mcpServers = servers
+      } catch (err) {
+        return { status: 'error', servers: [], error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+    return { status: servers.length === 0 ? 'empty' : 'ready', servers }
+  }
+
+  /**
+   * Enable / disable / reconnect / authenticate an MCP server. Mirrors
+   * {@link useModelForSession}: flip the cached status optimistically and emit so
+   * the panel updates instantly, fire the control call, then re-scan on settle to
+   * reflect the real outcome (e.g. pending → connected / failed).
+   */
+  mcpAction(id: string, name: string, action: McpAction): void {
+    const session = this.sessions.get(id)
+    if (!session?.query) {
+      return
+    }
+    const optimistic: McpStatus = action === 'disable' ? 'disabled' : 'pending'
+    if (session.mcpServers) {
+      session.mcpServers = session.mcpServers.map((s) => (s.name === name ? { ...s, status: optimistic } : s))
+      this.emit({ type: 'mcpServers', sessionId: id, status: 'ready', servers: session.mcpServers })
+    }
+    const query = session.query
+    const settle = () => void this.refreshMcp(id)
+    if (action === 'disable') {
+      void query.toggleMcpServer(name, false).then(settle, settle)
+    } else if (action === 'enable') {
+      void query.toggleMcpServer(name, true).then(settle, settle)
+    } else {
+      void query.reconnectMcpServer(name).then(settle, settle)
+    }
+  }
+
+  /** Re-scan MCP status and push the fresh list to the panel (best effort). */
+  private async refreshMcp(id: string): Promise<void> {
+    const session = this.sessions.get(id)
+    if (!session?.query) {
+      return
+    }
+    try {
+      const raw = await session.query.mcpServerStatus()
+      session.mcpServers = raw.map((s) => this.mapMcpServer(s))
+      this.emit({ type: 'mcpServers', sessionId: id, status: session.mcpServers.length === 0 ? 'empty' : 'ready', servers: session.mcpServers })
+    } catch {
+      // Keep the optimistic state if the re-scan fails.
+    }
   }
 
   /**

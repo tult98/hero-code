@@ -121,6 +121,14 @@ export class ChatView implements vscode.WebviewViewProvider {
           manager.useModelForSession(msg.sessionId, msg.value, msg.effort)
         }
         return
+      case 'listMcp':
+        void this.sendMcpServers(msg.sessionId, msg.refresh)
+        return
+      case 'mcpAction':
+        // Manager flips status optimistically and emits `mcpServers` itself
+        // (immediately + again on settle), so no reply is posted here.
+        manager.mcpAction(msg.sessionId, msg.name, msg.action)
+        return
     }
   }
 
@@ -143,6 +151,16 @@ export class ChatView implements vscode.WebviewViewProvider {
     const result = await this.manager.listModels(sessionId, refresh)
     if (this.activeId === sessionId) {
       this.post({ type: 'models', sessionId, ...result })
+    }
+  }
+
+  private async sendMcpServers(sessionId: string, refresh?: boolean): Promise<void> {
+    if (!this.manager) {
+      return
+    }
+    const result = await this.manager.listMcpServers(sessionId, refresh)
+    if (this.activeId === sessionId) {
+      this.post({ type: 'mcpServers', sessionId, ...result })
     }
   }
 
@@ -213,29 +231,53 @@ export class ChatView implements vscode.WebviewViewProvider {
 }
 
 /**
- * Rank workspace files under `cwd` for the composer's `@` menu. `findFiles`
- * honours `files.exclude` / `search.exclude` / `.gitignore` and is scoped to the
- * session folder via a `RelativePattern`; results are then fuzzily ordered by how
- * well each basename/path matches `query`. An empty query returns the first files.
+ * Rank workspace files and folders under `cwd` for the composer's `@` menu.
+ * `findFiles` honours `files.exclude` / `search.exclude` / `.gitignore` and is scoped
+ * to the session folder via a `RelativePattern`; folders are derived from the ancestor
+ * segments of the matched files (so the same excludes apply). Results are then fuzzily
+ * ordered by how well each basename/path matches `query`, with folders preferred over
+ * files on a tie so `@src` surfaces the `src/` folder. Empty query returns first files.
  */
 async function searchWorkspaceFiles(cwd: string, query: string, limit = 50): Promise<FileHit[]> {
   const pattern = new vscode.RelativePattern(cwd, '**/*')
   const uris = await vscode.workspace.findFiles(pattern, undefined, 4000)
   const q = query.toLowerCase()
-  const scored: { hit: FileHit; score: number }[] = []
+  // Collect files, and the set of ancestor directories they live under.
+  const rels: string[] = []
+  const dirs = new Set<string>()
   for (const uri of uris) {
     const rel = path.relative(cwd, uri.fsPath).split(path.sep).join('/')
     if (!rel || rel.startsWith('..')) {
       continue
     }
+    rels.push(rel)
+    let slash = rel.indexOf('/')
+    while (slash !== -1) {
+      dirs.add(rel.slice(0, slash))
+      slash = rel.indexOf('/', slash + 1)
+    }
+  }
+  const scored: { hit: FileHit; score: number }[] = []
+  const consider = (rel: string, isDirectory: boolean): void => {
     const name = rel.slice(rel.lastIndexOf('/') + 1)
     const score = scoreFileMatch(name.toLowerCase(), rel.toLowerCase(), q)
     if (score < 0) {
-      continue
+      return
     }
-    scored.push({ hit: { rel, name }, score })
+    scored.push({ hit: { rel, name, isDirectory }, score })
   }
-  scored.sort((a, b) => b.score - a.score || a.hit.rel.length - b.hit.rel.length)
+  for (const rel of dirs) {
+    consider(rel, true)
+  }
+  for (const rel of rels) {
+    consider(rel, false)
+  }
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      Number(!!b.hit.isDirectory) - Number(!!a.hit.isDirectory) ||
+      a.hit.rel.length - b.hit.rel.length,
+  )
   return scored.slice(0, limit).map((s) => s.hit)
 }
 

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, CommandInfo, FileHit, ModelChoice, PermissionRequest } from '../../chat/types.js'
+import type { AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, CommandInfo, FileHit, McpServerInfo, ModelChoice, PermissionRequest } from '../../chat/types.js'
 import { vscode } from './vscode-api.js'
 import { AskQuestionPanel } from './AskQuestionPanel.js'
 import { ApprovalPanel } from './ApprovalPanel.js'
 import { PlanApprovalPanel } from './PlanApprovalPanel.js'
 import { Message } from './Message.js'
 import { ModelPanel, type ModelPanelStatus } from './ModelPanel.js'
+import { McpPanel, type McpPanelStatus } from './McpPanel.js'
 
 /**
  * Per-status header pill: label, a full literal Tailwind color token (so the
@@ -223,6 +224,12 @@ export function Chat() {
     defaultValue?: string
     error?: string
   } | null>(null)
+  // `/mcp` panel (composer slot): null when closed, else the latest server list + state.
+  const [mcpPanel, setMcpPanel] = useState<{
+    status: McpPanelStatus
+    servers: McpServerInfo[]
+    error?: string
+  } | null>(null)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -252,6 +259,7 @@ export function Chat() {
           commandsRequested.current = false
           setFileHits({ query: '', items: [] })
           setModelPanel(null)
+          setMcpPanel(null)
           break
         case 'commands':
           setCommands(msg.commands)
@@ -260,6 +268,10 @@ export function Chat() {
         case 'models':
           // Ignore late catalog replies for a picker the user already closed.
           setModelPanel((prev) => (prev ? { status: msg.status, models: msg.models, currentValue: msg.currentValue, defaultValue: msg.defaultValue, error: msg.error } : prev))
+          break
+        case 'mcpServers':
+          // Ignore late/settle replies for a panel the user already closed.
+          setMcpPanel((prev) => (prev ? { status: msg.status, servers: msg.servers, error: msg.error } : prev))
           break
         case 'fileResults':
           setFileHits({ query: msg.query, items: msg.results })
@@ -439,6 +451,33 @@ export function Chat() {
     requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
+  // Open the `/mcp` panel in the composer slot and request the server list.
+  const openMcpPanel = () => {
+    if (!sessionId) {
+      return
+    }
+    setMcpPanel({ status: 'loading', servers: [] })
+    vscode.postMessage({ type: 'listMcp', sessionId })
+  }
+
+  // Close the `/mcp` panel and return focus to the composer.
+  const closeMcpPanel = () => {
+    setMcpPanel(null)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+
+  // Dismiss the AskUserQuestion panel: tell the extension it was dismissed and
+  // restore the composer. Reused by the panel's onDismiss and the global Esc key.
+  const dismissAsk = () => {
+    if (!ask) {
+      return
+    }
+    if (sessionId) {
+      vscode.postMessage({ type: 'answerQuestion', sessionId, requestId: ask.requestId, answers: {}, dismissed: true })
+    }
+    setAsk(null)
+  }
+
   const send = () => {
     const text = input.trim()
     if (!sessionId || (!text && images.length === 0)) {
@@ -454,6 +493,12 @@ export function Chat() {
     if (images.length === 0 && text === '/model') {
       setInput('')
       openModelPanel()
+      return
+    }
+    // `/mcp` opens the MCP management panel instead of sending a prompt.
+    if (images.length === 0 && text === '/mcp') {
+      setInput('')
+      openMcpPanel()
       return
     }
     // `!<command>` (first char, no images) runs a raw shell command instead of
@@ -503,10 +548,10 @@ export function Chat() {
         }))
       : (fileHits.query === menu.query ? fileHits.items : []).map((h) => ({
           key: h.rel,
-          insert: `@${h.rel} `,
-          primary: h.name,
+          insert: h.isDirectory ? `@${h.rel}/ ` : `@${h.rel} `,
+          primary: h.isDirectory ? `${h.name}/` : h.name,
           secondary: h.rel,
-          icon: 'codicon-file',
+          icon: h.isDirectory ? 'codicon-folder' : 'codicon-file',
         }))
   const menuLoading = !!menu && menu.kind === 'file' && fileHits.query !== menu.query
   const menuActive = menu ? Math.min(menu.active, Math.max(0, menuItems.length - 1)) : 0
@@ -522,7 +567,7 @@ export function Chat() {
   })
   shortcutRef.current = {
     sessionId,
-    blocked: !!(menu || modelPanel || ask || permission),
+    blocked: !!(menu || modelPanel || mcpPanel || ask || permission),
   }
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -531,6 +576,41 @@ export function Chat() {
       if (blocked || !sessionId) return
       e.preventDefault()
       vscode.postMessage({ type: 'cycleMode', sessionId })
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  // Esc closes whichever overlay is currently replacing/covering the composer,
+  // from anywhere in the chat view (not only when the panel holds focus). A ref
+  // carries the latest closer so the listener is bound once. When a panel is
+  // focused it handles Esc itself and calls stopPropagation, so this never
+  // double-fires; the composer's own Esc (close menu / interrupt) is untouched
+  // because escRef returns false when no overlay is open.
+  const escRef = useRef<() => boolean>(() => false)
+  escRef.current = () => {
+    if (modelPanel) {
+      closeModelPanel()
+      return true
+    }
+    if (mcpPanel) {
+      closeMcpPanel()
+      return true
+    }
+    if (ask) {
+      dismissAsk()
+      return true
+    }
+    if (permission) {
+      respondPermission('no')
+      return true
+    }
+    return false
+  }
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (escRef.current()) e.preventDefault()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
@@ -638,7 +718,19 @@ export function Chat() {
         {/* Input card — swapped for the AskUserQuestion picker or the tool-approval
             panel while Claude waits on a decision. Only the composer input is replaced;
             the transcript above and the session-facts footer below stay put. */}
-        {ask ? (
+        {mcpPanel ? (
+          <McpPanel
+            status={mcpPanel.status}
+            servers={mcpPanel.servers}
+            error={mcpPanel.error}
+            onAction={(name, action) => vscode.postMessage({ type: 'mcpAction', sessionId, name, action })}
+            onRefresh={() => {
+              setMcpPanel((prev) => (prev ? { ...prev, status: 'loading' } : prev))
+              vscode.postMessage({ type: 'listMcp', sessionId, refresh: true })
+            }}
+            onClose={closeMcpPanel}
+          />
+        ) : ask ? (
           <AskQuestionPanel
             request={ask}
             onSubmit={(answers) => {
@@ -647,17 +739,11 @@ export function Chat() {
               }
               setAsk(null)
             }}
-            onDismiss={() => {
-              if (sessionId) {
-                vscode.postMessage({ type: 'answerQuestion', sessionId, requestId: ask.requestId, answers: {}, dismissed: true })
-              }
-              setAsk(null)
-            }}
+            onDismiss={dismissAsk}
           />
         ) : permission ? (
           permission.kind === 'plan' ? (
             <PlanApprovalPanel
-              request={permission}
               onDecision={(decision, amend, mode) => respondPermission(decision, amend, mode)}
               onDismiss={() => respondPermission('no')}
             />
@@ -909,6 +995,14 @@ export function Chat() {
             <span className='codicon codicon-sparkle text-[#a78bcf]' style={{ fontSize: '12px' }} />
             {modelLabel(meta.model)}
             {meta.effort && <span className='text-vs-desc'>· {meta.effort}</span>}
+          </span>
+          <span
+            className='flex items-center gap-1.5 cursor-pointer text-vs-desc hover:text-vs-fg'
+            title='MCP servers · click to manage (/mcp)'
+            onClick={openMcpPanel}
+          >
+            <span className='codicon codicon-plug' style={{ fontSize: '12px' }} />
+            MCP
           </span>
           {(() => {
             const mode = MODE_STYLE[meta.permissionMode ?? ''] ?? MODE_STYLE.default
