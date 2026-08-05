@@ -1,4 +1,10 @@
-export type Status = 'working' | 'waiting' | 'error' | 'idle'
+/**
+ * `working` and `waiting` are the two states that want your attention: the
+ * session is running, or it is blocked on you. `ready` is a live session
+ * sitting at an empty prompt with nothing to answer — distinct from `idle`,
+ * which means no live process backs the row at all.
+ */
+export type Status = 'working' | 'waiting' | 'ready' | 'error' | 'idle'
 
 /** Fields derived purely from the transcript (no live-process knowledge). */
 export interface ParsedSession {
@@ -6,6 +12,13 @@ export interface ParsedSession {
   activity?: string
   stopReason?: string
   errored?: boolean
+  /**
+   * A `tool_use` reached the end of the transcript with no matching
+   * `tool_result`. While the process is busy that just means the tool is
+   * running; once it goes quiet it means the turn is parked on a permission
+   * prompt or an `AskUserQuestion` and genuinely needs the user.
+   */
+  pendingTool?: boolean
   /**
    * Branch of the session cwd's git repo, from the last transcript entry that
    * recorded one (Claude snapshots it per entry, so this tracks mid-session
@@ -25,6 +38,12 @@ export interface SessionItem extends ParsedSession {
   createdAt: number
   status: Status
   running: boolean
+  /**
+   * `statusUpdatedAt` of the live process backing this row. This — not `mtime`
+   * — is the freshness signal for status: a session inside a long tool call
+   * keeps heartbeating the registry while writing nothing to the transcript.
+   */
+  liveUpdatedAt?: number
   /**
    * The session id the process currently runs under, when it differs from the
    * display `id` after `/clear`. The row keeps the stable launch `id` for
@@ -97,6 +116,8 @@ export interface RawEntry {
   pid?: number
   /** Live status Claude writes into `~/.claude/sessions/<pid>.json` (e.g. 'busy' | 'idle'). */
   status?: string
+  /** Registry only: Claude's own derived session name — a last-resort title. */
+  name?: string
   /** Registry timestamps (ms) — used to pick the most-active among duplicate processes. */
   startedAt?: number
   updatedAt?: number
@@ -106,4 +127,9 @@ export interface RawEntry {
   uuid?: string
   /** True for sub-agent (Task) internal turns; excluded from the main chat view. */
   isSidechain?: boolean
+  /**
+   * True on a user-shaped entry Claude injected itself (a skill body, command
+   * scaffolding) rather than one the user typed.
+   */
+  isMeta?: boolean
 }

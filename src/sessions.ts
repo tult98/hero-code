@@ -4,7 +4,8 @@ import * as path from 'path'
 import * as os from 'os'
 import { execFileSync } from 'child_process'
 import type { ParsedSession, RawEntry, SessionGroup, SessionItem, SessionMeta, Status } from './types.js'
-import { encodeProjectPath, parseSession } from './transcript.js'
+import type { ParseState } from './transcript.js'
+import { encodeProjectPath, parseSessionFrom } from './transcript.js'
 
 /** A live `claude` process, resolved from `~/.claude/sessions/<pid>.json`. */
 interface LiveSession {
@@ -19,6 +20,8 @@ interface LiveSession {
    * break ties when several processes back the same launch id.
    */
   updatedAt: number
+  /** Claude's own derived session name, when the registry recorded one. */
+  name?: string
   /**
    * Every live id seen across *all* alive processes that share this launch id.
    * When two terminals resume the same session, one may diverge to a new live id
@@ -63,6 +66,17 @@ function getProcessCommands(): Map<number, string> {
 
 /** Pulls the launch session id out of a `claude --session-id/--resume <uuid>` command line. */
 const LAUNCH_ID_RE = /--(?:session-id|resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/
+
+/**
+ * Confirms a registry entry's pid is still the process that wrote it. Kept
+ * deliberately loose — a plain substring — because the two failure modes are
+ * not symmetric: wrongly *rejecting* a live process hides a real session from
+ * the sidebar, while wrongly accepting one only reproduces the ghost row we
+ * already had. Every real invocation carries it (argv[0] is `claude`, or the
+ * script path contains it); an unrelated process that inherits a recycled pid
+ * essentially never does.
+ */
+const CLAUDE_CMD_RE = /claude/i
 
 /**
  * Live `claude` processes keyed by their **launch** id — the id the extension
@@ -114,11 +128,21 @@ function getLiveSessions(): Map<string, LiveSession> {
       continue
     }
 
-    const liveId = entry.sessionId
     const cmd = commands.get(entry.pid)
+    // "Does this pid exist" isn't "is this pid still claude": registry files
+    // outlive their process, and the OS recycles pids, which resurrected dead
+    // sessions as live rows. EPERM above makes that *more* likely, since a
+    // recycled pid owned by another user takes exactly that branch. When `ps`
+    // gave us nothing at all (non-unix, or it failed) we can't check, so we
+    // keep the old permissive behaviour rather than emptying the sidebar.
+    if (commands.size && !(cmd && CLAUDE_CMD_RE.test(cmd))) {
+      continue
+    }
+
+    const liveId = entry.sessionId
     const launchId = cmd ? LAUNCH_ID_RE.exec(cmd)?.[1]?.toLowerCase() ?? liveId : liveId
     const updatedAt = entry.statusUpdatedAt ?? entry.updatedAt ?? entry.startedAt ?? 0
-    const candidate = { liveId, status: entry.status, pid: entry.pid, updatedAt }
+    const candidate = { liveId, status: entry.status, pid: entry.pid, updatedAt, name: entry.name }
 
     // Several alive processes can share one launch id — e.g. two terminals both
     // `--resume <id>`, where the second diverges to a fresh live id. The registry
@@ -139,51 +163,89 @@ function getLiveSessions(): Map<string, LiveSession> {
 }
 
 /**
- * A session is `idle` when no live process backs it, `error` when its transcript
- * ended in an API error, and otherwise reflects Claude's own live status
- * ('busy' → working, anything else → waiting for input). When the registry omits
- * a status we fall back to the transcript's last turn.
+ * A live 'busy' process is checked first and beats everything: `errored` is the
+ * flag from the transcript's *last* assistant turn, so an API error the user has
+ * already retried past would otherwise pin the row to red while it works.
+ *
+ * Below that: no live process is `idle`; a transcript ending in an API error is
+ * `error`; an outstanding tool call on a process that has gone quiet means the
+ * turn is parked on a permission prompt and genuinely needs the user
+ * (`waiting`); anything else live is `ready` — sitting at an empty prompt. Only
+ * when the registry omits a status do we fall back to the transcript's last turn.
  */
 function deriveStatus(live: LiveSession | undefined, parsed: ParsedSession): Status {
+  if (live?.status === 'busy') {
+    return 'working'
+  }
   if (parsed.errored) {
     return 'error'
   }
   if (!live) {
     return 'idle'
   }
-  if (live.status === 'busy') {
-    return 'working'
-  }
-  if (live.status) {
+  if (parsed.pendingTool) {
     return 'waiting'
   }
-  return parsed.stopReason === 'tool_use' ? 'working' : 'waiting'
+  if (live.status) {
+    return 'ready'
+  }
+  return parsed.stopReason === 'tool_use' ? 'working' : 'ready'
 }
 
-/** Cache parsed sessions by path + mtime so auto-refresh stays cheap. */
-const cache = new Map<string, { mtime: number; birthtime: number; data: ParsedSession | null }>()
+interface CacheEntry {
+  mtime: number
+  size: number
+  birthtime: number
+  /** Parser position, carried across refreshes so appends resume mid-file. */
+  state: ParseState
+  data: ParsedSession | null
+}
 
-/** Parse a transcript file, reusing the cached result while its mtime is unchanged. */
-function parseCached(
-  full: string,
-): { mtime: number; birthtime: number; data: ParsedSession | null } | null {
+/** Cache parsed sessions by path so auto-refresh only reads what was appended. */
+const cache = new Map<string, CacheEntry>()
+
+/** Paths seen in the current scan, used to evict entries for vanished files. */
+let visited = new Set<string>()
+
+/**
+ * Parse a transcript file, resuming from the bytes already consumed. The
+ * sessions that matter most — the ones actively working — change on every
+ * refresh, so a whole-file re-read meant re-parsing a multi-megabyte JSONL on
+ * the extension host thread each tick. Now a refresh costs the bytes appended.
+ */
+function parseCached(full: string): CacheEntry | null {
+  visited.add(full)
   let mtime: number
+  let size: number
   let birthtime: number
   try {
     const stat = fs.statSync(full)
     mtime = stat.mtimeMs
+    size = stat.size
     // birthtime is the file's creation time — stable across writes. Some
     // filesystems report 0; fall back to mtime so ordering stays sane.
     birthtime = stat.birthtimeMs || stat.mtimeMs
   } catch {
     return null
   }
-  let cached = cache.get(full)
-  if (!cached || cached.mtime !== mtime) {
-    cached = { mtime, birthtime, data: parseSession(full) }
-    cache.set(full, cached)
+
+  const cached = cache.get(full)
+  // Size is part of the validity check, not just mtime: on a filesystem with
+  // coarse mtime granularity an append landing in the same tick as the last
+  // stat would otherwise serve a stale parse forever.
+  if (cached && cached.mtime === mtime && cached.size === size) {
+    return cached
   }
-  return cached
+
+  // A shrunk file was truncated or rewritten, so the carried offset is
+  // meaningless — parseSessionFrom starts over when prev.offset exceeds size.
+  const parsed = parseSessionFrom(full, size, cached?.state)
+  if (!parsed) {
+    return null
+  }
+  const entry: CacheEntry = { mtime, size, birthtime, state: parsed.state, data: parsed.data }
+  cache.set(full, entry)
+  return entry
 }
 
 /** Scan one workspace folder's transcript directory, newest-created first. */
@@ -240,6 +302,7 @@ function scanFolder(
       mtime: liveCached.mtime,
       createdAt: liveCached.birthtime,
       running: true,
+      liveUpdatedAt: info.updatedAt,
       status: deriveStatus(info, liveCached.data),
       ...liveCached.data,
       customName: m?.name,
@@ -259,12 +322,19 @@ function scanFolder(
     }
 
     const cached = parseCached(path.join(dir, file))
-    if (!cached || !cached.data) {
+    if (!cached) {
       continue
     }
 
     const info = live.get(id)
-    let data = cached.data
+    // A live session whose transcript yields no title yet — the first prompt
+    // hasn't flushed, or it carried only attachments — used to be dropped
+    // outright, so a session you just started was missing from the sidebar.
+    // The registry records Claude's own derived name; a rough label beats no row.
+    let data = cached.data ?? (info?.name ? { title: info.name } : undefined)
+    if (!data) {
+      continue
+    }
     let mtime = cached.mtime
 
     // This launch id's process moved to a new live id via `/clear`; show the
@@ -288,6 +358,7 @@ function scanFolder(
       // fixed even after `/clear` swaps in a newer live transcript.
       createdAt: cached.birthtime,
       running: !!info,
+      liveUpdatedAt: info?.updatedAt,
       status: deriveStatus(info, data),
       ...data,
       customName: m?.name,
@@ -317,7 +388,8 @@ export function getSessionGroups(meta: Record<string, SessionMeta>): SessionGrou
   // Resolve live processes once and reuse the map across every folder scan.
   const live = getLiveSessions()
 
-  return folders.map((folder) => ({
+  visited = new Set()
+  const groups = folders.map((folder) => ({
     name: folder.name,
     path: folder.uri.fsPath,
     sessions: scanFolder(folder.uri.fsPath, live, meta).map((s) => ({
@@ -325,4 +397,14 @@ export function getSessionGroups(meta: Record<string, SessionMeta>): SessionGrou
       folder: folder.name,
     })),
   }))
+
+  // Evict transcripts this scan never touched — deleted, archived, or in a
+  // folder that has since been closed. Each entry holds a parsed session and a
+  // carried tail buffer, so an unbounded cache leaks for the host's lifetime.
+  for (const key of cache.keys()) {
+    if (!visited.has(key)) {
+      cache.delete(key)
+    }
+  }
+  return groups
 }

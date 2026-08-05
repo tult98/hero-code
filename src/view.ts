@@ -2,6 +2,8 @@ import * as vscode from 'vscode'
 import { randomUUID } from 'crypto'
 import type { SessionItem, SessionMeta, Status } from './types.js'
 import { getSessionGroups } from './sessions.js'
+import type { ClaudeStateWatcher } from './watch.js'
+import { watchClaudeState } from './watch.js'
 import { hasSessionTerminal, openNewSessionTerminal, openSessionTerminal } from './terminal.js'
 import type { ChatSessionManager } from './chat/manager.js'
 import type { ChatStatus } from './chat/types.js'
@@ -13,25 +15,27 @@ const META_KEY = 'hero-code.sessionMeta'
 /**
  * Maps the chat GUI's live status onto the sidebar's vocabulary. A chat session
  * sitting between turns is `idle` to the chat, but from the sidebar's point of
- * view it is a live process "waiting for input" — the sidebar's own `idle` means
- * "no live process backs it".
+ * view it is a live process at an empty prompt — `ready`. The sidebar's own
+ * `idle` means "no live process backs it", and its `waiting` is reserved for a
+ * session actually blocked on the user.
  */
 const CHAT_STATUS_TO_SIDEBAR: Record<ChatStatus, Status> = {
   streaming: 'working',
   'awaiting-permission': 'waiting',
   error: 'error',
-  idle: 'waiting',
+  idle: 'ready',
 }
 
 /**
- * Safety net for a "working" row whose live signal has gone stale: a genuinely
- * working session writes to its transcript continuously, so a row still marked
- * working long after its last write is a latched status (e.g. a chat session
- * whose SDK `result` never arrived). Downgrade it to "waiting" past this window.
- * Kept generous — longer than any single tool call that stops writing the
- * transcript (a long build/test/research run) — so genuinely-working rows are
- * never flipped; the manager's own self-heal handles the common cases well before
- * this fires.
+ * Safety net for a "working" row whose live signal has gone stale — a latched
+ * status rather than real activity (e.g. a chat session whose SDK `result` never
+ * arrived, or a registry entry stuck on 'busy'). Downgrade it to `ready` past
+ * this window.
+ *
+ * Freshness is measured against the *registry* heartbeat, not the transcript:
+ * a session inside a long build or test run writes nothing to its transcript
+ * for many minutes while remaining genuinely busy, and keying off transcript
+ * mtime flipped exactly those rows to "waiting for input" while they worked.
  */
 const STALE_WORKING_MS = 5 * 60_000
 
@@ -40,6 +44,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView
   private timer?: ReturnType<typeof setInterval>
+  private watcher?: ClaudeStateWatcher
   private configListener?: vscode.Disposable
   /**
    * New sessions started from the "+" button, keyed by their pre-assigned
@@ -214,12 +219,24 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       }
     })
 
-    // Auto-refresh: re-scan session files while the panel is visible.
-    this.timer = setInterval(() => {
+    // Primary refresh: Claude rewrites its registry entry on every status
+    // change and appends to the transcript as it works, so watching those
+    // directories lands both within a couple hundred milliseconds. The
+    // visibility guard mirrors the poll; onDidChangeVisibility re-posts on reveal.
+    this.watcher = watchClaudeState(() => {
       if (this.view?.visible) {
         this.postState()
       }
-    }, 5000)
+    })
+
+    // Fallback: a slow re-scan covering filesystems where `fs.watch` is
+    // unreliable or a watched directory didn't exist when we first bound.
+    this.timer = setInterval(() => {
+      this.watcher?.retry()
+      if (this.view?.visible) {
+        this.postState()
+      }
+    }, 15000)
 
     // Apply a debug-mode toggle immediately rather than waiting for the next poll.
     this.configListener = vscode.workspace.onDidChangeConfiguration((e) => {
@@ -233,6 +250,8 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         clearInterval(this.timer)
         this.timer = undefined
       }
+      this.watcher?.dispose()
+      this.watcher = undefined
       this.configListener?.dispose()
       this.configListener = undefined
       this.view = undefined
@@ -266,7 +285,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         mtime: Date.now(),
         createdAt: Date.now(),
         running: true,
-        status: 'waiting',
+        status: 'ready',
       }
       group.sessions.unshift(placeholder)
     }
@@ -288,16 +307,19 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // Final safety net: never present "working" for a row that hasn't written its
-    // transcript within the freshness window — a latched status (from the overlay
-    // or the filesystem `stopReason` fallback) rather than real activity. Only ever
-    // downgrade working → waiting; placeholders carry a fresh mtime so they're never
-    // caught here.
+    // Final safety net: never present "working" for a row whose live signal has
+    // gone stale — a latched status (from the overlay or the filesystem
+    // `stopReason` fallback) rather than real activity. Prefer the registry
+    // heartbeat, which keeps ticking through a long tool call; fall back to the
+    // transcript only for rows with no live process behind them. Only ever
+    // downgrades working → ready; placeholders carry a fresh mtime so they're
+    // never caught here.
     const now = Date.now()
     for (const group of groups) {
       for (const session of group.sessions) {
-        if (session.status === 'working' && now - session.mtime > STALE_WORKING_MS) {
-          session.status = 'waiting'
+        const fresh = session.liveUpdatedAt ?? session.mtime
+        if (session.status === 'working' && now - fresh > STALE_WORKING_MS) {
+          session.status = 'ready'
         }
       }
     }

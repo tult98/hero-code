@@ -2,7 +2,7 @@ import type { Status } from '../types.js'
 import { STATUS_COLOR, STATUS_LABEL } from './status.js'
 
 // Chip order mirrors the approved mock: All, then activity-first statuses.
-const STATUSES: Status[] = ['working', 'waiting', 'idle', 'error']
+const STATUSES: Status[] = ['working', 'waiting', 'ready', 'idle', 'error']
 
 // The status color token, minus any animation utility (`waiting` carries
 // `animate-scpulse` for the row indicator, but a filter dot shouldn't pulse).

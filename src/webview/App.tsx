@@ -113,13 +113,13 @@ export function App() {
   // Per-status counts within the search scope (the status filter itself is
   // ignored, so the chips show how many of each status are available to filter
   // to). `total` drives the "All" chip.
-  const counts: Record<Status, number> = { working: 0, waiting: 0, idle: 0, error: 0 }
+  const counts: Record<Status, number> = { working: 0, waiting: 0, ready: 0, idle: 0, error: 0 }
   for (const group of groups) {
     for (const s of group.sessions) {
       if (matchesQuery(s)) counts[s.status]++
     }
   }
-  const totalCount = counts.working + counts.waiting + counts.idle + counts.error
+  const totalCount = Object.values(counts).reduce((a, b) => a + b, 0)
   const hasSessions = groups.some((group) => group.sessions.length > 0)
 
   // Any filter active — text query or status chips. Everything downstream keys

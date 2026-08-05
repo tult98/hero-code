@@ -13,6 +13,17 @@ export function encodeProjectPath(folderPath: string): string {
 }
 
 /** Slash-command / tool wrapper tags that aren't meaningful prompt text. */
+/**
+ * Text that is recorded as a user turn but isn't something the user typed, so
+ * it must never become a row's title or preview. Beyond the `isMeta` prefixes,
+ * this catches Claude Code's interrupt markers — by far the most common
+ * block-array user text, and meaningless as a session summary. Deliberately
+ * narrow: real prompts do open with a bracket (`[Image #1] still broken`).
+ */
+function isPromptNoise(s: string): boolean {
+  return isMeta(s) || /^\[Request interrupted by user/.test(s.trimStart())
+}
+
 function isMeta(s: string): boolean {
   return /^<(local-command|command-name|command-message|command-args|bash-input|bash-stdout|bash-stderr|user-prompt-submit-hook)/.test(
     s.trimStart(),
@@ -46,103 +57,208 @@ export function describeTool(name: string, input: ToolInput | undefined): string
 }
 
 /**
- * Parse a session `.jsonl` into the fields we can show. Everything here is
- * read straight from the transcript — title and last activity.
- * Returns null for sessions with no usable title (empty sessions).
+ * Everything `parseSession` accumulates while walking a transcript, kept
+ * separately so a growing file can be resumed from where the last read
+ * stopped instead of re-parsed from byte 0. Every field is last-wins except
+ * `firstUser` (first-wins) and `pending` (a set), so folding a later chunk in
+ * is just "keep going" — see `consume`.
  */
-export function parseSession(filePath: string): ParsedSession | null {
-  let content: string
-  try {
-    content = fs.readFileSync(filePath, 'utf8')
-  } catch {
-    return null
+export interface ParseState {
+  aiTitle?: string
+  lastPrompt?: string
+  firstUser?: string
+  activity?: string
+  stopReason?: string
+  gitBranch?: string
+  errored: boolean
+  /** tool_use ids seen with no matching tool_result yet. */
+  pending: Set<string>
+  /** Bytes of the file consumed so far — where the next read resumes. */
+  offset: number
+  /**
+   * Bytes after the last newline: an entry still being appended. Held as a
+   * Buffer, not a string, so a chunk boundary landing mid-UTF-8-sequence
+   * rejoins losslessly on the next read.
+   */
+  tail: Buffer
+}
+
+function newParseState(): ParseState {
+  return { errored: false, pending: new Set(), offset: 0, tail: Buffer.alloc(0) }
+}
+
+/** Fold one transcript entry into the running state. */
+function apply(state: ParseState, entry: RawEntry): void {
+  // Outside the switch: system/attachment entries carry it too.
+  if (typeof entry.gitBranch === 'string' && entry.gitBranch) {
+    state.gitBranch = entry.gitBranch
   }
 
-  let aiTitle: string | undefined
-  let lastPrompt: string | undefined
-  let firstUser: string | undefined
-  let activity: string | undefined
-  let stopReason: string | undefined
-  let gitBranch: string | undefined
-  let errored = false
+  switch (entry.type) {
+    case 'ai-title':
+      if (entry.aiTitle) {
+        state.aiTitle = entry.aiTitle
+      }
+      break
+    case 'last-prompt':
+      if (entry.lastPrompt) {
+        state.lastPrompt = entry.lastPrompt
+      }
+      break
+    case 'user': {
+      const c = entry.message?.content
+      // A typed prompt is a plain string, but any prompt carrying an `@file`
+      // mention or a pasted image arrives as a block array instead. Reading
+      // only strings meant those prompts never refreshed the row's preview
+      // line, which is a large share of real messages.
+      const text = typeof c === 'string' ? c : userPromptText(state, c)
+      // `isMeta` on the entry marks Claude's own injections (skill bodies,
+      // command scaffolding) — they are shaped like user turns but nothing the
+      // user typed, and they otherwise dominate the preview line.
+      if (text && !entry.isMeta && !isPromptNoise(text)) {
+        // A typed user prompt — counts as the latest activity.
+        if (state.firstUser === undefined) {
+          state.firstUser = text
+        }
+        state.activity = text
+      }
+      break
+    }
+    case 'assistant': {
+      // The last assistant turn tells us whether work is in progress
+      // (`tool_use`) or finished (`end_turn`), and whether it errored.
+      const sr = entry.message?.stop_reason
+      if (typeof sr === 'string' && sr) {
+        state.stopReason = sr
+      }
+      state.errored = !!(entry.isApiErrorMessage || entry.error)
 
-  for (const line of content.split('\n')) {
+      const blocks = entry.message?.content
+      if (!Array.isArray(blocks)) {
+        break
+      }
+      for (const b of blocks as ContentBlock[]) {
+        if (b?.type === 'tool_use') {
+          activityFromTool(state, b)
+        } else if (b?.type === 'text' && b.text?.trim() && !isMeta(b.text)) {
+          state.activity = b.text.trim()
+        }
+      }
+      break
+    }
+  }
+}
+
+function activityFromTool(state: ParseState, b: ContentBlock): void {
+  state.activity = describeTool(b.name ?? '', b.input)
+  if (b.id) {
+    state.pending.add(b.id)
+  }
+}
+
+/**
+ * Text of a block-array user entry, or undefined when it isn't a prompt.
+ * Tool results ride in as user entries too; those aren't something the user
+ * typed, so they resolve `pending` and are otherwise ignored.
+ */
+function userPromptText(state: ParseState, content: unknown): string | undefined {
+  if (!Array.isArray(content)) {
+    return undefined
+  }
+  const text: string[] = []
+  let isToolResult = false
+  for (const b of content as ContentBlock[]) {
+    if (b?.type === 'tool_result') {
+      isToolResult = true
+      if (b.tool_use_id) {
+        state.pending.delete(b.tool_use_id)
+      }
+    } else if (b?.type === 'text' && b.text?.trim()) {
+      text.push(b.text.trim())
+    }
+  }
+  return isToolResult || !text.length ? undefined : text.join('\n')
+}
+
+/** Parse whole lines out of `chunk`, carrying any partial final line forward. */
+function consume(state: ParseState, chunk: Buffer): void {
+  const buf = state.tail.length ? Buffer.concat([state.tail, chunk]) : chunk
+  const lastNewline = buf.lastIndexOf(0x0a)
+  if (lastNewline < 0) {
+    state.tail = buf
+    return
+  }
+  state.tail = buf.subarray(lastNewline + 1)
+
+  for (const line of buf.subarray(0, lastNewline).toString('utf8').split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) {
       continue
     }
-    let entry: RawEntry
     try {
-      entry = JSON.parse(trimmed) as RawEntry
+      apply(state, JSON.parse(trimmed) as RawEntry)
     } catch {
       continue
     }
-
-    // Outside the switch: system/attachment entries carry it too.
-    if (typeof entry.gitBranch === 'string' && entry.gitBranch) {
-      gitBranch = entry.gitBranch
-    }
-
-    switch (entry.type) {
-      case 'ai-title':
-        if (entry.aiTitle) {
-          aiTitle = entry.aiTitle
-        }
-        break
-      case 'last-prompt':
-        if (entry.lastPrompt) {
-          lastPrompt = entry.lastPrompt
-        }
-        break
-      case 'user': {
-        const c = entry.message?.content
-        if (typeof c === 'string' && !isMeta(c)) {
-          // A typed user prompt — counts as the latest activity.
-          if (firstUser === undefined) {
-            firstUser = c
-          }
-          activity = c
-        }
-        break
-      }
-      case 'assistant': {
-        // The last assistant turn tells us whether work is in progress
-        // (`tool_use`) or finished (`end_turn`), and whether it errored.
-        const sr = entry.message?.stop_reason
-        if (typeof sr === 'string' && sr) {
-          stopReason = sr
-        }
-        errored = !!(entry.isApiErrorMessage || entry.error)
-
-        const blocks = entry.message?.content
-        if (!Array.isArray(blocks)) {
-          break
-        }
-        for (const b of blocks as ContentBlock[]) {
-          if (b?.type === 'tool_use') {
-            activity = describeTool(b.name ?? '', b.input)
-          } else if (b?.type === 'text' && b.text?.trim() && !isMeta(b.text)) {
-            activity = b.text.trim()
-          }
-        }
-        break
-      }
-    }
   }
+}
 
-  const title = aiTitle ?? lastPrompt ?? firstUser
+/** The displayable view of the accumulated state, or null with no usable title. */
+function snapshot(state: ParseState): ParsedSession | null {
+  // Clean *before* the emptiness check: a prompt that opens with a newline is
+  // non-empty raw but cleans to '', which used to render as a blank row label.
+  const clean = (s: string) => s.split('\n')[0].trim()
+  const title = clean(state.aiTitle ?? state.lastPrompt ?? state.firstUser ?? '')
   if (!title) {
     return null
   }
-
-  const clean = (s: string) => s.split('\n')[0].trim()
   return {
-    title: clean(title).slice(0, 120),
-    activity: activity ? clean(activity).slice(0, 120) : undefined,
-    stopReason,
-    gitBranch,
-    errored,
+    title: title.slice(0, 120),
+    activity: state.activity ? clean(state.activity).slice(0, 120) : undefined,
+    stopReason: state.stopReason,
+    gitBranch: state.gitBranch,
+    errored: state.errored,
+    pendingTool: state.pending.size > 0,
   }
+}
+
+/**
+ * Parse a session `.jsonl` into the fields we can show — title, last activity,
+ * and whether a tool call is still outstanding. Everything here is read
+ * straight from the transcript.
+ *
+ * Reads only `[prev.offset, size)`, folding the new entries into `prev`, so an
+ * actively-working session costs the bytes it appended rather than a full
+ * re-read of a file that routinely reaches megabytes. Pass no `prev` (or one
+ * whose offset exceeds `size`, i.e. the file was truncated) to parse from the
+ * start. Returns null if the file can't be read; `data` is null for sessions
+ * with no usable title (empty sessions).
+ */
+export function parseSessionFrom(
+  filePath: string,
+  size: number,
+  prev?: ParseState,
+): { state: ParseState; data: ParsedSession | null } | null {
+  const state = prev && prev.offset <= size ? prev : newParseState()
+  if (size > state.offset) {
+    let fd: number
+    try {
+      fd = fs.openSync(filePath, 'r')
+    } catch {
+      return null
+    }
+    try {
+      const buf = Buffer.allocUnsafe(size - state.offset)
+      const read = fs.readSync(fd, buf, 0, buf.length, state.offset)
+      consume(state, buf.subarray(0, read))
+      state.offset += read
+    } catch {
+      return null
+    } finally {
+      fs.closeSync(fd)
+    }
+  }
+  return { state, data: snapshot(state) }
 }
 
 /** Longest tool_result text we keep for display, to bound the hydrate payload. */
