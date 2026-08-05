@@ -1,14 +1,15 @@
 import * as vscode from 'vscode'
 import { SessionsViewProvider } from './view.js'
-import { mentionInSessionTerminal, reconnectTerminals } from './terminal.js'
+import { initTerminals, mentionInSessionTerminal } from './terminal.js'
 import { ChatSessionManager } from './chat/manager.js'
 import { ChatView } from './chat/view.js'
 
 export function activate(context: vscode.ExtensionContext) {
   // Re-adopt any terminals VS Code restored from before a window reload, before
   // the view can post its first click, so reveals hit the existing terminal
-  // rather than spawning a duplicate.
-  reconnectTerminals()
+  // rather than spawning a duplicate. Also readies the tmux host that lets a
+  // single terminal switch between sessions.
+  initTerminals(context)
 
   // The GUI chat engine: one shared docked chat view, driven by SDK sessions.
   // The view is created first so the manager can emit events straight into it.

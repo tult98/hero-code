@@ -7,6 +7,7 @@ import { pathToFileURL } from 'url'
 import * as vscode from 'vscode'
 import type { AskQuestionItem, AskQuestionOption, AskQuestionRequest, ChatImageAttachment, ChatMessage, ChatMeta, ChatOutbound, ChatStatus, ChatToolUseBlock, CommandInfo, McpAction, McpServerInfo, McpStatus, ModelChoice, PermissionKind, PermissionRequest, PermissionRisk } from './types.js'
 import { describeTool, encodeProjectPath, lastAssistantModel, parseTranscriptMessages } from '../transcript.js'
+import { findExecutable } from '../shellEnv.js'
 import type { ToolInput } from '../types.js'
 
 // Minimal local shapes for the Agent SDK. We deliberately avoid importing the
@@ -135,31 +136,15 @@ function findClaudeExecutable(): string | undefined {
     return configured
   }
 
-  // Absolute install locations. The extension host's PATH is unreliable (GUI
-  // launches often lack `~/.local/bin`), so probe the well-known spots directly.
+  // Absolute install locations first — the extension host's PATH is unreliable
+  // (GUI launches often lack `~/.local/bin`); `findExecutable` falls back to a
+  // login-shell lookup when none of these exist.
   const home = os.homedir()
   const candidates =
     process.platform === 'win32'
       ? [path.join(home, '.local', 'bin', 'claude.exe'), path.join(home, '.local', 'bin', 'claude.cmd')]
       : [path.join(home, '.local', 'bin', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude']
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate
-    }
-  }
-
-  // Last resort: ask a login shell to resolve `claude` on the user's real PATH.
-  try {
-    const shell = process.env.SHELL || '/bin/zsh'
-    const out = execFileSync(shell, ['-lic', 'command -v claude'], { encoding: 'utf8' }).trim()
-    if (out && path.isAbsolute(out) && fs.existsSync(out)) {
-      return out
-    }
-  } catch {
-    // No login shell / `claude` not on PATH — fall through.
-  }
-
-  return undefined
+  return findExecutable('claude', candidates)
 }
 
 /** The user's saved default model (`/model` → "Set as default"), or undefined. */

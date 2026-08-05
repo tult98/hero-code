@@ -246,7 +246,8 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     // been written yet, so they appear (and can be selected) immediately.
     for (const [id, folderPath] of this.pending) {
       if (!hasSessionTerminal(id) && !this.chat.has(id)) {
-        // The terminal/chat session ended before the first message — abandon it.
+        // Its terminal (or tmux session) and chat are both gone, so the session
+        // ended before the first message — abandon it.
         this.pending.delete(id)
         continue
       }

@@ -2,7 +2,7 @@
   "name": "hero-code",
   "displayName": "Hero Code",
   "description": "Manage multiple Claude Code sessions at once — realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -37,10 +37,28 @@
           ],
           "enumDescriptions": [
             "Open new and resumed sessions in an integrated terminal running the Claude CLI (default).",
-            "Open new and idle sessions in an in-editor GUI chat window powered by the Claude Agent SDK. Sessions already running live in a terminal still open in a terminal."
+            "Open sessions in an in-editor GUI chat window powered by the Claude Agent SDK."
           ],
           "default": "terminal",
           "description": "How to open Claude sessions: an integrated terminal, or an in-editor GUI chat window."
+        },
+        "heroCode.terminalMultiplexer": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Run each session in a background tmux session so a single terminal can switch between them instantly and the session you switch away from keeps working (default). Falls back to one terminal per session when tmux is unavailable.",
+            "Open one integrated terminal per session."
+          ],
+          "default": "auto",
+          "description": "How sessions are hosted in the terminal. With `auto`, sessions run under a private tmux server (your own tmux configuration is not loaded) and at most one terminal is open at a time; note that selecting text inside those terminals requires holding Shift."
+        },
+        "heroCode.tmuxPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the `tmux` executable used to host terminal sessions. Leave empty to auto-detect from common install locations and your shell's PATH."
         },
         "heroCode.debugMode": {
           "type": "boolean",
