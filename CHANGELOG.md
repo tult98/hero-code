@@ -2,6 +2,45 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.17] - 2026-08-08
+
+### Added
+
+- **Notifications when a session needs you.** Hero Code now tells you when a session parks
+  on a permission prompt or a question, when it finishes a turn, and when a turn errors —
+  as a native notification when you've switched away from VS Code, and as an in-editor
+  notification with an **Open** button when you haven't. Clicking **Open** reveals the
+  sidebar and jumps straight to that session.
+- **A count of what's waiting.** Sessions blocked on you show as a badge on the Claude
+  Sessions activity-bar icon and as a status-bar item, so the signal is still there after
+  a notification disappears. Both clear themselves the moment you answer.
+- Sessions are now tracked in the background. Previously nothing was scanned unless the
+  sidebar was open, so a session that started needing attention while it was closed went
+  unnoticed until you looked.
+- New `heroCode.notifications.*` settings covering which events notify
+  (`onNeedsInput` / `onTurnFinished` / `onError`), how they're shown (`style`), whether to
+  stay quiet while you're looking at VS Code (`whenFocused`), `sound`, and the `badge` and
+  `statusBar` indicators. Turning all of them off restores the old zero-background-work
+  behaviour.
+
+### Changed
+
+- "Finished" is detected from the transcript's own end-of-turn marker rather than from a
+  busy→idle status flip, which happens several times *within* a single turn. When Claude
+  writes an away-summary for the turn, that summary becomes the notification body.
+- Sessions running in `auto` permission mode no longer notify for a long-running tool
+  call. Claude approves its own tools there, so an outstanding call means "slow tool", not
+  "needs you" — questions still notify. Controlled by
+  `heroCode.notifications.ignoreAutoMode`.
+
+### Notes
+
+- On macOS, native notifications are posted through `osascript` and so appear under
+  **Script Editor**. If no banner appears, allow notifications for Script Editor in
+  System Settings → Notifications. Native banners can't be clicked back into VS Code —
+  use the sidebar badge to get back to the session, or set
+  `heroCode.notifications.style` to `toast`.
+
 ## [0.0.13] - 2026-07-14
 
 ### Added

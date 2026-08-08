@@ -19,6 +19,11 @@ always-current dashboard.
   workspace folders in one list, instead of hunting through terminal tabs.
 - **Realtime status** — each session shows whether it's **Working**, **Waiting for input**,
   **Idle**, or **Error**, refreshed automatically so you always know where things stand.
+- **Get told when a session needs you** — a notification when a session hits a permission
+  prompt or a question, finishes a turn, or errors: a native banner once you've switched
+  away from VS Code, an in-editor notification with an **Open** button while you're still
+  in it. A badge on the sidebar icon and a status-bar item keep the count of what's
+  waiting. Tune it all under `heroCode.notifications.*`.
 - **New session in one click** — press the **add new (+)** button to start a fresh session;
   open or resume any existing session's terminal from its row.
 - **Keep your sessions organized** — **pin** the ones you care about to the top, **rename**

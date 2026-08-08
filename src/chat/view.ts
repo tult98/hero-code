@@ -45,6 +45,16 @@ export class ChatView implements vscode.WebviewViewProvider {
     this.hydrate()
   }
 
+  /**
+   * Whether this session's conversation is actually on screen right now. The
+   * `visible` check is not optional: `activeId` is never cleared when the view
+   * is hidden, so testing it alone would report the last-viewed session as
+   * on-screen forever.
+   */
+  showingSession(sessionId: string): boolean {
+    return this.view?.visible === true && this.activeId === sessionId
+  }
+
   /** Reveal the chat view showing `sessionId`, hydrating it from the manager. */
   show(sessionId: string): void {
     this.activeId = sessionId

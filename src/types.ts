@@ -20,6 +20,32 @@ export interface ParsedSession {
    */
   pendingTool?: boolean
   /**
+   * Id of the oldest outstanding `tool_use`. Stable for as long as a turn stays
+   * parked on the same prompt, so it identifies *which* prompt is waiting —
+   * `pendingTool` alone can't tell a still-unanswered question from a new one.
+   */
+  pendingToolId?: string
+  /** Tool name of that outstanding call, e.g. 'AskUserQuestion' or 'Bash'. */
+  pendingToolName?: string
+  /**
+   * How many turns have completed, counted from the `system`/`turn_duration`
+   * entries Claude writes just after each turn's final `end_turn`. An advance
+   * here is an exact turn-finished edge; a busy→idle status flip is not, since
+   * the registry goes quiet between tool calls *within* a turn.
+   */
+  turnCount?: number
+  /**
+   * Claude's own recap of the turn it just finished (`system`/`away_summary`),
+   * written for longer turns. Ideal notification body when present.
+   */
+  summary?: string
+  /**
+   * Session's current permission mode ('default' | 'auto' | 'plan' |
+   * 'acceptEdits'), tracked mid-session. In `auto` Claude approves tools
+   * itself, so an outstanding tool call there means "slow tool", not "needs you".
+   */
+  permissionMode?: string
+  /**
    * Branch of the session cwd's git repo, from the last transcript entry that
    * recorded one (Claude snapshots it per entry, so this tracks mid-session
    * branch switches). Detached HEAD is the literal 'HEAD'.
@@ -132,4 +158,12 @@ export interface RawEntry {
    * scaffolding) rather than one the user typed.
    */
   isMeta?: boolean
+  /** Discriminator on `type: 'system'` entries, e.g. 'turn_duration' | 'away_summary'. */
+  subtype?: string
+  /** Top-level payload of a `system` entry (the away-summary prose). Distinct from `message.content`. */
+  content?: unknown
+  /** Wall-clock length of the turn a `turn_duration` entry closes. */
+  durationMs?: number
+  /** Mode recorded by a `permission-mode` entry. */
+  permissionMode?: string
 }

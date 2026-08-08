@@ -1,8 +1,15 @@
 import * as vscode from 'vscode'
 import { SessionsViewProvider } from './view.js'
+import { SessionMonitor } from './monitor.js'
+import { TransitionDetector } from './events.js'
+import { AttentionIndicator, Notifier } from './notify.js'
+import { openSessionAnywhere } from './open.js'
 import { initTerminals, mentionInSessionTerminal } from './terminal.js'
 import { ChatSessionManager } from './chat/manager.js'
 import { ChatView } from './chat/view.js'
+
+/** Focuses the Claude Sessions sidebar — the way back from a native banner. */
+const REVEAL_SIDEBAR = 'workbench.view.extension.hero-code-sessions'
 
 export function activate(context: vscode.ExtensionContext) {
   // Re-adopt any terminals VS Code restored from before a window reload, before
@@ -17,14 +24,35 @@ export function activate(context: vscode.ExtensionContext) {
   const chatManager = new ChatSessionManager((event) => chatView.handleEvent(event), context.extensionUri.fsPath)
   chatView.attach(chatManager)
 
-  const provider = new SessionsViewProvider(
-    context.extensionUri,
-    context.globalState,
-    chatManager,
-    chatView,
+  // The always-on session scan. It deliberately does not belong to the sidebar:
+  // everything below only works because state keeps being derived while no view
+  // is open, which is exactly when a notification is worth sending.
+  const monitor = new SessionMonitor(context.globalState, chatManager)
+
+  const provider = new SessionsViewProvider(context.extensionUri, monitor, chatManager, chatView)
+
+  const detector = new TransitionDetector(chatManager)
+  const notifier = new Notifier(
+    () => monitor.snapshot,
+    () => provider.visible,
+    (id) => chatView.showingSession(id),
+    (e) => {
+      void vscode.commands.executeCommand(REVEAL_SIDEBAR)
+      openSessionAnywhere(chatManager, chatView, e.id, e.title, e.liveId, e.folderPath)
+    },
+    () => void vscode.commands.executeCommand(REVEAL_SIDEBAR),
   )
+  const indicator = new AttentionIndicator((count, tooltip) => provider.setBadge(count, tooltip))
+
+  monitor.onDidChange((snap) => {
+    indicator.update(snap)
+    notifier.push(detector.detect(snap))
+  })
 
   context.subscriptions.push(
+    monitor,
+    notifier,
+    indicator,
     vscode.window.registerWebviewViewProvider(
       SessionsViewProvider.viewType,
       provider,

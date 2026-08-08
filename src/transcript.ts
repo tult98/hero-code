@@ -71,8 +71,23 @@ export interface ParseState {
   stopReason?: string
   gitBranch?: string
   errored: boolean
-  /** tool_use ids seen with no matching tool_result yet. */
-  pending: Set<string>
+  /**
+   * tool_use ids seen with no matching tool_result yet, mapped to the tool's
+   * name. Insertion-ordered, so the first key is the oldest outstanding call —
+   * the one a parked turn is actually waiting on.
+   */
+  pending: Map<string, string>
+  /**
+   * Number of `system`/`turn_duration` entries seen. Claude writes exactly one
+   * of these just after a turn's final `end_turn`, so this counter advancing is
+   * an exact "a turn just finished" edge — unlike a busy↔idle status flip, which
+   * happens several times *within* one turn.
+   */
+  turnCount: number
+  /** Latest `system`/`away_summary` text: Claude's own recap of what it just did. */
+  summary?: string
+  /** Latest `permission-mode` entry — 'default' | 'auto' | 'plan' | 'acceptEdits'. */
+  permissionMode?: string
   /** Bytes of the file consumed so far — where the next read resumes. */
   offset: number
   /**
@@ -84,7 +99,7 @@ export interface ParseState {
 }
 
 function newParseState(): ParseState {
-  return { errored: false, pending: new Set(), offset: 0, tail: Buffer.alloc(0) }
+  return { errored: false, pending: new Map(), turnCount: 0, offset: 0, tail: Buffer.alloc(0) }
 }
 
 /** Fold one transcript entry into the running state. */
@@ -146,13 +161,30 @@ function apply(state: ParseState, entry: RawEntry): void {
       }
       break
     }
+    case 'system':
+      // Claude writes `turn_duration` immediately after a turn's final
+      // `end_turn`, and often an `away_summary` right behind it. Together they
+      // are the only exact "the turn is over, here is what happened" signal in
+      // the transcript.
+      if (entry.subtype === 'turn_duration') {
+        state.turnCount++
+      } else if (entry.subtype === 'away_summary' && typeof entry.content === 'string') {
+        state.summary = entry.content.trim() || undefined
+      }
+      break
+    // Claude records mode switches mid-session under both spellings.
+    case 'permission-mode':
+      if (typeof entry.permissionMode === 'string' && entry.permissionMode) {
+        state.permissionMode = entry.permissionMode
+      }
+      break
   }
 }
 
 function activityFromTool(state: ParseState, b: ContentBlock): void {
   state.activity = describeTool(b.name ?? '', b.input)
   if (b.id) {
-    state.pending.add(b.id)
+    state.pending.set(b.id, b.name ?? '')
   }
 }
 
@@ -219,6 +251,14 @@ function snapshot(state: ParseState): ParsedSession | null {
     gitBranch: state.gitBranch,
     errored: state.errored,
     pendingTool: state.pending.size > 0,
+    // First key = oldest outstanding tool_use. While a turn stays parked on one
+    // prompt this id is stable, which is what lets the notifier tell "still the
+    // same question" from "a new one".
+    pendingToolId: state.pending.keys().next().value,
+    pendingToolName: state.pending.values().next().value,
+    turnCount: state.turnCount,
+    summary: state.summary,
+    permissionMode: state.permissionMode,
   }
 }
 

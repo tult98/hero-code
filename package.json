@@ -2,7 +2,7 @@
   "name": "hero-code",
   "displayName": "Hero Code",
   "description": "Manage multiple Claude Code sessions at once — realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -24,7 +24,9 @@
     "Other"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "configuration": {
       "title": "Hero Code",
@@ -87,6 +89,76 @@
           ],
           "default": "",
           "description": "Default reasoning effort for new GUI chat sessions, set via the `/model` panel. Leave empty to use the model's default."
+        },
+        "heroCode.notifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify you when a Claude session needs your input, finishes a turn, or errors. With this off and both indicators below off, Hero Code does no background session scanning at all."
+        },
+        "heroCode.notifications.onNeedsInput": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when a session parks on a permission prompt or a question."
+        },
+        "heroCode.notifications.onTurnFinished": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when a session finishes a turn. This is the most frequent event — turn it off if it feels chatty."
+        },
+        "heroCode.notifications.onError": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when a session's turn fails."
+        },
+        "heroCode.notifications.style": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "banner",
+            "toast"
+          ],
+          "enumDescriptions": [
+            "A native macOS banner when the VS Code window is in the background, an in-editor notification when it is focused (default).",
+            "Always a native macOS banner. Note that banners cannot be clicked back into VS Code — use the sidebar badge to return to the session.",
+            "Always an in-editor notification, which has a clickable Open button."
+          ],
+          "default": "auto",
+          "description": "How notifications are shown. Non-macOS platforms always use in-editor notifications."
+        },
+        "heroCode.notifications.whenFocused": {
+          "type": "string",
+          "enum": [
+            "suppress-if-visible",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Stay quiet when the Sessions sidebar is open or that session's chat is on screen — you can already see the status (default).",
+            "Always notify, even while you are working in VS Code.",
+            "Never notify while the VS Code window is focused; only once you have switched away."
+          ],
+          "default": "suppress-if-visible",
+          "description": "Whether to notify while the VS Code window is focused."
+        },
+        "heroCode.notifications.sound": {
+          "type": "boolean",
+          "default": false,
+          "description": "Play a sound with native macOS banners."
+        },
+        "heroCode.notifications.ignoreAutoMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "In sessions using the `auto` permission mode, where Claude approves its own tool calls, treat a long-running tool as work in progress rather than as needing your input. Questions still notify."
+        },
+        "heroCode.notifications.badge": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the number of sessions waiting for input as a badge on the Claude Sessions activity-bar icon."
+        },
+        "heroCode.notifications.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a status-bar item with the number of Claude sessions waiting for input."
         }
       }
     },
