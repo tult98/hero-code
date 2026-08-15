@@ -2,7 +2,7 @@
   "name": "hero-code",
   "displayName": "Hero Code",
   "description": "Manage multiple Claude Code sessions at once — realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -119,11 +119,11 @@
           ],
           "enumDescriptions": [
             "A native macOS banner when the VS Code window is in the background, an in-editor notification when it is focused (default).",
-            "Always a native macOS banner. Note that banners cannot be clicked back into VS Code — use the sidebar badge to return to the session.",
+            "Always a native macOS banner. A banner clicks back into VS Code but has no per-session Open button — use the sidebar badge to find the session.",
             "Always an in-editor notification, which has a clickable Open button."
           ],
           "default": "auto",
-          "description": "How notifications are shown. Non-macOS platforms always use in-editor notifications."
+          "description": "How notifications are shown. Non-macOS platforms always use in-editor notifications. Banners are posted by VS Code itself, so macOS may ask once for permission to control it; if that is denied they still appear, but under Script Editor's name and icon."
         },
         "heroCode.notifications.whenFocused": {
           "type": "string",

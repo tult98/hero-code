@@ -2,6 +2,19 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.18] - 2026-08-15
+
+### Fixed
+
+- **Native notifications now come from VS Code.** They previously appeared under **Script
+  Editor**, with its icon and with a click that woke Script Editor instead of the editor
+  you were trying to get back to — macOS credits a notification to whichever process
+  posts it, and `osascript` was posting as itself. Banners are now addressed to the
+  hosting app, so they carry its icon and clicking one brings VS Code forward. The app is
+  detected at runtime, so Insiders, VSCodium and forks each post as themselves.
+- macOS may ask once for permission for VS Code to control itself. If that is denied,
+  notifications keep working exactly as before, under Script Editor.
+
 ## [0.0.17] - 2026-08-08
 
 ### Added
