@@ -2,6 +2,8 @@
 .vscode-test/**
 .claude/**
 .serena/**
+# Contributor guidance for coding agents, not user documentation.
+CLAUDE.md
 media/claude.webp
 src/**
 # Nothing from node_modules ships: everything the extension needs is bundled
