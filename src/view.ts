@@ -2,10 +2,7 @@ import * as vscode from 'vscode'
 import { randomUUID } from 'crypto'
 import type { SessionMeta } from './types.js'
 import type { MonitorSnapshot, SessionMonitor } from './monitor.js'
-import { openNewSessionTerminal } from './terminal.js'
-import { isChatMode, openSessionAnywhere } from './open.js'
-import type { ChatSessionManager } from './chat/manager.js'
-import type { ChatView } from './chat/view.js'
+import { openNewSessionTerminal, openSessionTerminal } from './terminal.js'
 
 export class SessionsViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hero-code.sessions'
@@ -31,8 +28,6 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly monitor: SessionMonitor,
-    private readonly chat: ChatSessionManager,
-    private readonly chatView: ChatView,
   ) {}
 
   /** Whether the sidebar is currently on screen. */
@@ -51,28 +46,9 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** Open a session on click, in whichever surface it belongs to. */
-  private openSession(id: string, title?: string, liveId?: string, path?: string): void {
-    openSessionAnywhere(this.chat, this.chatView, id, title, liveId, path)
-  }
-
   /** Persist a metadata patch for one session; the monitor re-scans and re-posts. */
   private setMeta(id: string, patch: SessionMeta): void {
     this.monitor.setMeta(id, patch)
-  }
-
-  /** Start a new SDK-driven chat session, then reveal it in the chat panel. */
-  private newChatSession(folderPath: string): void {
-    void this.chat
-      .create(folderPath)
-      .then((id) => {
-        this.monitor.addPending(id, folderPath)
-        this.selectOnce = id
-        this.selected = id
-        this.chatView.show(id)
-        this.monitor.refresh()
-      })
-      .catch((e) => vscode.window.showErrorMessage(`Could not start chat session: ${e instanceof Error ? e.message : e}`))
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -107,18 +83,14 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
           this.post(this.monitor.snapshot)
         } else if (msg.type === 'open' && msg.id) {
           this.selected = msg.id
-          this.openSession(msg.id, msg.title, msg.liveId, msg.path)
+          openSessionTerminal(msg.id, msg.title, msg.liveId)
         } else if (msg.type === 'newSession' && msg.path) {
-          if (isChatMode()) {
-            this.newChatSession(msg.path)
-          } else {
-            const id = randomUUID()
-            openNewSessionTerminal(msg.path, id)
-            this.monitor.addPending(id, msg.path)
-            this.selectOnce = id
-            this.selected = id
-            this.monitor.refresh()
-          }
+          const id = randomUUID()
+          openNewSessionTerminal(msg.path, id)
+          this.monitor.addPending(id, msg.path)
+          this.selectOnce = id
+          this.selected = id
+          this.monitor.refresh()
         } else if (msg.type === 'pin' && msg.id) {
           this.setMeta(msg.id, { pinned: msg.pinned })
         } else if (msg.type === 'rename' && msg.id) {

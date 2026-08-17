@@ -1,8 +1,6 @@
 import * as vscode from 'vscode'
 import type { SessionItem, Status } from './types.js'
 import type { MonitorSnapshot } from './monitor.js'
-import { chatIdOf } from './monitor.js'
-import type { ChatSessionManager } from './chat/manager.js'
 
 export type SessionEventKind = 'waiting' | 'finished' | 'error'
 
@@ -15,8 +13,6 @@ export interface SessionEvent {
   title: string
   /** Workspace folder name, for disambiguating identical titles across projects. */
   folder?: string
-  /** Workspace folder path, needed to resume the session in chat mode. */
-  folderPath?: string
   /** What Claude is asking / what it just did. Refreshed at delivery time. */
   detail?: string
   /** The outstanding tool_use this `waiting` event refers to, if any. */
@@ -49,8 +45,6 @@ const SELF_APPROVING = new Set(['auto', 'acceptEdits', 'bypassPermissions'])
 export class TransitionDetector {
   private readonly prev = new Map<string, Prev>()
   private primed = false
-
-  constructor(private readonly chat: ChatSessionManager) {}
 
   detect(snap: MonitorSnapshot): SessionEvent[] {
     const events: SessionEvent[] = []
@@ -85,27 +79,20 @@ export class TransitionDetector {
           continue
         }
 
-        const chatOwned = chatIdOf(this.chat, s) !== undefined
-
         // --- needs input -------------------------------------------------
         if (s.status === 'waiting') {
           const key = s.pendingToolId ?? 'waiting'
           const isQuestion = s.pendingToolName === 'AskUserQuestion'
           // In a self-approving mode Claude answers its own permission prompts,
           // so an outstanding tool call means "slow tool", not "needs you". A
-          // real question is asked of the user regardless of mode. Chat sessions
-          // are exempt: their `waiting` comes from the SDK's own permission gate,
-          // which is fact rather than inference.
+          // real question is asked of the user regardless of mode.
           const inferredFromSlowTool =
-            !chatOwned &&
-            ignoreAuto &&
-            !isQuestion &&
-            SELF_APPROVING.has(s.permissionMode ?? '')
+            ignoreAuto && !isQuestion && SELF_APPROVING.has(s.permissionMode ?? '')
           // Fire once per parked prompt. A row that flaps waiting → ready →
           // waiting on the same outstanding call is one prompt, not two.
           if (!inferredFromSlowTool && next.firedWaitingFor !== key) {
             next.firedWaitingFor = key
-            events.push(toEvent('waiting', s, group.name, group.path, s.activity, key))
+            events.push(toEvent('waiting', s, group.name, s.activity, key))
           }
         } else if (prev.status === 'waiting' || !s.pendingTool) {
           // The prompt was answered (or the turn moved on) — re-arm.
@@ -117,32 +104,29 @@ export class TransitionDetector {
         // per turn, whereas the registry goes idle between tool calls *within*
         // a turn and would fire several times.
         if (next.turnCount > prev.turnCount) {
-          events.push(toEvent('finished', s, group.name, group.path, s.summary ?? s.activity))
+          events.push(toEvent('finished', s, group.name, s.summary ?? s.activity))
         } else if (
-          // Only for a session that has never written a turn marker — most
-          // SDK-driven chat transcripts, and terminal sessions on a Claude build
-          // that predates them. Once a row has produced one marker we trust the
-          // markers and never take this branch, so no turn is announced twice.
-          //
-          // A chat session's status edge here is streaming → idle, driven by the
-          // SDK `result` message, so it is precise on its own. A terminal
-          // session needs the extra guard that the turn actually stopped rather
-          // than parked mid-tool.
+          // Only for a session that has never written a turn marker — a Claude
+          // build that predates them. Once a row has produced one marker we
+          // trust the markers and never take this branch, so no turn is
+          // announced twice. The status edge alone isn't enough: we also need
+          // the guard that the turn actually stopped rather than parked
+          // mid-tool.
           !next.usesTurnMarker &&
           prev.status === 'working' &&
           s.status === 'ready' &&
           // A staleness downgrade is a latch clearing, not a turn ending.
           !snap.staleDowngraded.has(s.id) &&
-          (chatOwned || s.stopReason !== 'tool_use')
+          s.stopReason !== 'tool_use'
         ) {
-          events.push(toEvent('finished', s, group.name, group.path, s.summary ?? s.activity))
+          events.push(toEvent('finished', s, group.name, s.summary ?? s.activity))
         }
 
         // --- error --------------------------------------------------------
         // Rising edge only. `errored` reflects the last assistant turn and
         // clears itself on the next good one, so this can't repeat in place.
         if (s.status === 'error' && prev.status !== 'error') {
-          events.push(toEvent('error', s, group.name, group.path, s.activity))
+          events.push(toEvent('error', s, group.name, s.activity))
         }
 
         this.prev.set(s.id, next)
@@ -166,7 +150,6 @@ function toEvent(
   kind: SessionEventKind,
   s: SessionItem,
   folder: string,
-  folderPath: string,
   detail?: string,
   key?: string,
 ): SessionEvent {
@@ -176,7 +159,6 @@ function toEvent(
     liveId: s.liveId,
     title: s.customName || s.title || 'Claude session',
     folder,
-    folderPath,
     detail,
     key,
   }

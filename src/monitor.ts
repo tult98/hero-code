@@ -1,34 +1,17 @@
 import * as vscode from 'vscode'
-import type { SessionGroup, SessionItem, SessionMeta, Status } from './types.js'
+import type { SessionGroup, SessionItem, SessionMeta } from './types.js'
 import { getSessionGroups } from './sessions.js'
 import type { ClaudeStateWatcher } from './watch.js'
 import { watchClaudeState } from './watch.js'
 import { hasSessionTerminal } from './terminal.js'
-import type { ChatSessionManager } from './chat/manager.js'
-import type { ChatStatus } from './chat/types.js'
 
 /** `globalState` key under which per-session user metadata is stored. */
 const META_KEY = 'hero-code.sessionMeta'
 
 /**
- * Maps the chat GUI's live status onto the sidebar's vocabulary. A chat session
- * sitting between turns is `idle` to the chat, but from the sidebar's point of
- * view it is a live process at an empty prompt — `ready`. The sidebar's own
- * `idle` means "no live process backs it", and its `waiting` is reserved for a
- * session actually blocked on the user.
- */
-const CHAT_STATUS_TO_SIDEBAR: Record<ChatStatus, Status> = {
-  streaming: 'working',
-  'awaiting-permission': 'waiting',
-  error: 'error',
-  idle: 'ready',
-}
-
-/**
  * Safety net for a "working" row whose live signal has gone stale — a latched
- * status rather than real activity (e.g. a chat session whose SDK `result` never
- * arrived, or a registry entry stuck on 'busy'). Downgrade it to `ready` past
- * this window.
+ * status rather than real activity (e.g. a registry entry stuck on 'busy').
+ * Downgrade it to `ready` past this window.
  *
  * Freshness is measured against the *registry* heartbeat, not the transcript:
  * a session inside a long build or test run writes nothing to its transcript
@@ -75,24 +58,9 @@ export interface MonitorSnapshot {
 const EMPTY_SNAPSHOT: MonitorSnapshot = { groups: [], staleDowngraded: new Set(), at: 0 }
 
 /**
- * The id the chat manager knows this row by, if it owns it at all. A row is
- * keyed by its stable launch id, but after `/clear` the chat tracks the
- * diverged live id instead.
- */
-export function chatIdOf(chat: ChatSessionManager, session: SessionItem): string | undefined {
-  if (chat.has(session.id)) {
-    return session.id
-  }
-  if (session.liveId && chat.has(session.liveId)) {
-    return session.liveId
-  }
-  return undefined
-}
-
-/**
  * Owns the session scan: the filesystem watcher, the fallback poll, the
  * persisted per-session metadata, and every adjustment layered on top of the raw
- * scan (optimistic rows, chat overlay, staleness guard).
+ * scan (optimistic rows, staleness guard).
  *
  * This deliberately lives outside the webview. Everything here used to hang off
  * `SessionsViewProvider.resolveWebviewView` behind an `if (view.visible)` guard,
@@ -125,14 +93,10 @@ export class SessionMonitor implements vscode.Disposable {
    */
   private readonly pending = new Map<string, string>()
 
-  constructor(
-    private readonly memento: vscode.Memento,
-    private readonly chat: ChatSessionManager,
-  ) {
+  constructor(private readonly memento: vscode.Memento) {
     // No visibility guard on any of these: the whole point is to keep deriving
     // state while nothing is on screen.
     this.watcher = watchClaudeState(() => this.onWatchEvent())
-    this.subs.push(this.chat.onDidChangeStatus(() => this.refresh()))
     this.subs.push(vscode.workspace.onDidChangeWorkspaceFolders(() => this.refresh()))
     this.subs.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -295,7 +259,7 @@ export class SessionMonitor implements vscode.Disposable {
    * The raw scan plus every adjustment the sidebar used to apply on its way to
    * the webview. All of it happens here so the notifier and the sidebar read the
    * same statuses — a notifier working off unadjusted rows would fire "finished"
-   * on the staleness guard and miss chat sessions entirely.
+   * on the staleness guard.
    */
   private compute(): MonitorSnapshot {
     const groups = getSessionGroups(this.getMeta())
@@ -303,9 +267,9 @@ export class SessionMonitor implements vscode.Disposable {
     // Merge optimistic rows for "+"-started sessions whose transcript hasn't
     // been written yet, so they appear (and can be selected) immediately.
     for (const [id, folderPath] of this.pending) {
-      if (!hasSessionTerminal(id) && !this.chat.has(id)) {
-        // The terminal (or tmux session) and the chat are both gone, so the
-        // session ended before its first message — abandon it.
+      if (!hasSessionTerminal(id)) {
+        // The terminal (or tmux session) is gone, so the session ended before
+        // its first message — abandon it.
         this.pending.delete(id)
         continue
       }
@@ -327,19 +291,6 @@ export class SessionMonitor implements vscode.Disposable {
         status: 'ready',
       }
       group.sessions.unshift(placeholder)
-    }
-
-    // Overlay the chat GUI's live status onto the rows it owns. The manager's
-    // in-memory status is real-time and authoritative for chat sessions, where
-    // the filesystem-derived status lags and misses SDK-driven states.
-    for (const group of groups) {
-      for (const session of group.sessions) {
-        const chatId = chatIdOf(this.chat, session)
-        const chatStatus = chatId ? this.chat.chatStatusOf(chatId) : undefined
-        if (chatStatus) {
-          session.status = CHAT_STATUS_TO_SIDEBAR[chatStatus]
-        }
-      }
     }
 
     // A row still marked "working" long after its last heartbeat is showing a

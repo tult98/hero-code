@@ -4,8 +4,6 @@
    .tsx components and the .ts status map). */
 @source "./*.ts";
 @source "./*.tsx";
-@source "./chat/*.ts";
-@source "./chat/*.tsx";
 
 /*
  * Bridge VS Code's theme variables into Tailwind color tokens so utilities like
@@ -21,9 +19,6 @@
   --color-vs-yellow: var(--vscode-charts-yellow, #e2b53d);
   --color-vs-red: var(--vscode-charts-red, #f14c4c);
   --color-vs-green: var(--vscode-charts-green, #89d185);
-  /* Pinned to Claude terracotta orange, not the theme's charts.orange, so the chat
-     accent is always brand orange regardless of the active VS Code theme. */
-  --color-vs-accent: #d97757;
   --color-vs-sel-bg: var(--vscode-list-activeSelectionBackground);
   --color-vs-sel-fg: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
   --color-vs-hover-bg: var(--vscode-list-hoverBackground);
@@ -41,28 +36,6 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
-
-/* `/model` + `/mcp` panels: loading skeleton shimmer. */
-@keyframes mp-shim {
-  0% { background-position: -260px 0; }
-  100% { background-position: 260px 0; }
-}
-
-/* `/mcp` panel: pulsing dot / spinner icon while a server is connecting. */
-@keyframes mcpulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(0.82); }
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* `/mcp` panel: slim scrollbar for the server list / detail scroll areas. */
-.mcp-scroll::-webkit-scrollbar { width: 8px; }
-.mcp-scroll::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, #ffffff26); border-radius: 6px; }
-.mcp-scroll::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground, #ffffff40); }
-.mcp-scroll::-webkit-scrollbar-track { background: transparent; }
 
 @layer base {
   html,

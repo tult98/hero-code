@@ -44,24 +44,6 @@ function copyCodicons() {
 }
 
 /**
- * Vendor the Claude Agent SDK into `dist/vendor/` so the chat window can load it
- * at runtime. The SDK is ESM-only (can't be bundled into our CJS host) and vsce's
- * node_modules handling makes shipping a single scoped package from node_modules
- * unreliable, so we copy the package's own files into `dist/` — which already
- * ships — and import from there (see src/chat/manager.ts). We deliberately copy
- * ONLY this package, not its ~240MB sibling `claude-agent-sdk-<platform>` CLI
- * binary: the SDK drives the user's installed `claude` via
- * `pathToClaudeCodeExecutable`, so the bundled binary is never needed.
- */
-function copyAgentSdk() {
-	const src = path.join(__dirname, 'node_modules', '@anthropic-ai', 'claude-agent-sdk');
-	const dest = path.join(__dirname, 'dist', 'vendor', '@anthropic-ai', 'claude-agent-sdk');
-	fs.rmSync(dest, { recursive: true, force: true });
-	fs.mkdirSync(path.dirname(dest), { recursive: true });
-	fs.cpSync(src, dest, { recursive: true });
-}
-
-/**
  * @type {import('esbuild').Plugin}
  */
 const esbuildProblemMatcherPlugin = {
@@ -94,44 +76,32 @@ async function main() {
 		sourcesContent: false,
 		platform: 'node',
 		outfile: 'dist/extension.js',
-		// `vscode` is provided by the runtime. The Claude Agent SDK is an ESM-only
-		// package, so it can't be bundled into this CJS output; it is vendored into
-		// `dist/vendor/` (see copyAgentSdk) and loaded at runtime via a dynamic
-		// `import()` of its absolute path.
-		external: ['vscode', '@anthropic-ai/claude-agent-sdk'],
+		// `vscode` is provided by the runtime.
+		external: ['vscode'],
 		logLevel: 'silent',
 		plugins: [esbuildProblemMatcherPlugin],
 	});
 
-	// Webview: browser/IIFE React bundles loaded by a panel shell. React is
-	// bundled in (no externals); JSX uses the automatic runtime. Two entries: the
-	// sidebar Sessions list and the editor-area chat window.
-	const webviewContext = (entry, outfile) =>
-		esbuild.context({
-			entryPoints: [entry],
-			bundle: true,
-			format: 'iife',
-			jsx: 'automatic',
-			minify: production,
-			sourcemap: !production,
-			sourcesContent: false,
-			platform: 'browser',
-			outfile,
-			// React/react-dom read `process.env.NODE_ENV`, which doesn't exist in a
-			// webview. Substitute it so the bundle loads and picks the right React build.
-			define: { 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
-			logLevel: 'silent',
-		});
+	// Webview: the browser/IIFE React bundle for the sidebar Sessions list, loaded
+	// by a panel shell. React is bundled in (no externals); JSX uses the automatic
+	// runtime.
+	const webviewCtx = await esbuild.context({
+		entryPoints: ['src/webview/main.tsx'],
+		bundle: true,
+		format: 'iife',
+		jsx: 'automatic',
+		minify: production,
+		sourcemap: !production,
+		sourcesContent: false,
+		platform: 'browser',
+		outfile: 'dist/webview.js',
+		// React/react-dom read `process.env.NODE_ENV`, which doesn't exist in a
+		// webview. Substitute it so the bundle loads and picks the right React build.
+		define: { 'process.env.NODE_ENV': production ? '"production"' : '"development"' },
+		logLevel: 'silent',
+	});
 
-	const [webviewCtx, chatCtx] = await Promise.all([
-		webviewContext('src/webview/main.tsx', 'dist/webview.js'),
-		webviewContext('src/webview/chat/main.tsx', 'dist/chat.js'),
-	]);
-
-	const contexts = [hostCtx, webviewCtx, chatCtx];
-	// Vendor the ESM-only Agent SDK into dist/ once (it's static — no need to
-	// re-copy on watch rebuilds).
-	copyAgentSdk();
+	const contexts = [hostCtx, webviewCtx];
 	if (watch) {
 		await Promise.all(contexts.map((c) => c.watch()));
 		watchTailwind();

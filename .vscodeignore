@@ -4,11 +4,8 @@
 .serena/**
 media/claude.webp
 src/**
-# Nothing from node_modules ships. The one runtime-external package, the ESM-only
-# Claude Agent SDK, is vendored into dist/vendor by esbuild.js (see copyAgentSdk)
-# and loaded from there, so the whole tree — including the SDK's ~240MB bundled
-# CLI binary — stays out of the .vsix. The SDK drives the user's own installed
-# `claude` via pathToClaudeCodeExecutable, so its binary is not needed.
+# Nothing from node_modules ships: everything the extension needs is bundled
+# into dist/ by esbuild.
 node_modules/**
 .gitignore
 .yarnrc

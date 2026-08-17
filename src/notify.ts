@@ -58,7 +58,6 @@ export class Notifier implements vscode.Disposable {
   constructor(
     private readonly currentSnapshot: () => MonitorSnapshot,
     private readonly isSidebarVisible: () => boolean,
-    private readonly isChatShowing: (id: string) => boolean,
     private readonly open: (e: SessionEvent) => void,
     private readonly revealSidebar: () => void,
   ) {}
@@ -143,7 +142,7 @@ export class Notifier implements vscode.Disposable {
         // The away-summary may only have landed during the grace window.
         e.detail = row.summary ?? e.detail
       }
-      if (this.suppressed(e)) {
+      if (this.suppressed()) {
         continue
       }
       const key = `${e.id}:${e.kind}`
@@ -184,7 +183,7 @@ export class Notifier implements vscode.Disposable {
    * the sidebar open, the row's status dot updates within a couple hundred
    * milliseconds — a popup on top of that is just noise.
    */
-  private suppressed(e: SessionEvent): boolean {
+  private suppressed(): boolean {
     if (!vscode.window.state.focused) {
       return false
     }
@@ -195,7 +194,7 @@ export class Notifier implements vscode.Disposable {
     if (mode === 'always') {
       return false
     }
-    return this.isSidebarVisible() || this.isChatShowing(e.id)
+    return this.isSidebarVisible()
   }
 
   private deliver(title: string, detail: string, e: SessionEvent | undefined): void {

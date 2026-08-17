@@ -149,10 +149,6 @@ export interface RawEntry {
   updatedAt?: number
   statusUpdatedAt?: number
   message?: { content?: unknown; stop_reason?: string; role?: string }
-  /** Message uuid, when present — used as a stable chat-message id. */
-  uuid?: string
-  /** True for sub-agent (Task) internal turns; excluded from the main chat view. */
-  isSidechain?: boolean
   /**
    * True on a user-shaped entry Claude injected itself (a skill body, command
    * scaffolding) rather than one the user typed.

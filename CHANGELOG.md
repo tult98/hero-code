@@ -2,6 +2,16 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.20] - 2026-08-18
+
+### Removed
+
+- **The GUI chat window is gone.** Sessions are terminal-only now. The "Claude Chat"
+  activity-bar view, the Claude Agent SDK engine behind it, and its settings
+  (`heroCode.newSessionMode`, `heroCode.claudePath`, `heroCode.defaultModel`,
+  `heroCode.defaultEffort`) have all been removed. Opening a session — from a click or
+  from a notification's **Open** button — always reveals its terminal.
+
 ## [0.0.19] - 2026-08-18
 
 ### Fixed

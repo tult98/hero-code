@@ -1,8 +1,8 @@
 {
   "name": "hero-code",
   "displayName": "Hero Code",
-  "description": "Manage multiple Claude Code sessions at once — realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
-  "version": "0.0.19",
+  "description": "Manage multiple Claude Code sessions at once \u2014 realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
+  "version": "0.0.20",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -31,19 +31,6 @@
     "configuration": {
       "title": "Hero Code",
       "properties": {
-        "heroCode.newSessionMode": {
-          "type": "string",
-          "enum": [
-            "terminal",
-            "chat"
-          ],
-          "enumDescriptions": [
-            "Open new and resumed sessions in an integrated terminal running the Claude CLI (default).",
-            "Open sessions in an in-editor GUI chat window powered by the Claude Agent SDK."
-          ],
-          "default": "terminal",
-          "description": "How to open Claude sessions: an integrated terminal, or an in-editor GUI chat window."
-        },
         "heroCode.terminalMultiplexer": {
           "type": "string",
           "enum": [
@@ -67,29 +54,6 @@
           "default": false,
           "description": "Show session debug info (launch id, live id, PID) in a hover tooltip on each session row."
         },
-        "heroCode.claudePath": {
-          "type": "string",
-          "default": "",
-          "description": "Absolute path to the `claude` executable that the GUI chat window (Claude Agent SDK) should drive. Leave empty to auto-detect from common install locations and your shell's PATH."
-        },
-        "heroCode.defaultModel": {
-          "type": "string",
-          "default": "",
-          "description": "Default model for new GUI chat sessions, set via the `/model` panel's \"Set as default\". A model id or alias (e.g. `opus`, `sonnet`, `claude-opus-4-8`). Leave empty to use the CLI's own default."
-        },
-        "heroCode.defaultEffort": {
-          "type": "string",
-          "enum": [
-            "",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
-          "default": "",
-          "description": "Default reasoning effort for new GUI chat sessions, set via the `/model` panel. Leave empty to use the model's default."
-        },
         "heroCode.notifications.enabled": {
           "type": "boolean",
           "default": true,
@@ -103,7 +67,7 @@
         "heroCode.notifications.onTurnFinished": {
           "type": "boolean",
           "default": true,
-          "description": "Notify when a session finishes a turn. This is the most frequent event — turn it off if it feels chatty."
+          "description": "Notify when a session finishes a turn. This is the most frequent event \u2014 turn it off if it feels chatty."
         },
         "heroCode.notifications.onError": {
           "type": "boolean",
@@ -119,7 +83,7 @@
           ],
           "enumDescriptions": [
             "A native macOS banner when the VS Code window is in the background, an in-editor notification when it is focused (default).",
-            "Always a native macOS banner. A banner clicks back into VS Code but has no per-session Open button — use the sidebar badge to find the session.",
+            "Always a native macOS banner. A banner clicks back into VS Code but has no per-session Open button \u2014 use the sidebar badge to find the session.",
             "Always an in-editor notification, which has a clickable Open button."
           ],
           "default": "auto",
@@ -133,7 +97,7 @@
             "never"
           ],
           "enumDescriptions": [
-            "Stay quiet when the Sessions sidebar is open or that session's chat is on screen — you can already see the status (default).",
+            "Stay quiet when the Sessions sidebar is open \u2014 you can already see the status (default).",
             "Always notify, even while you are working in VS Code.",
             "Never notify while the VS Code window is focused; only once you have switched away."
           ],
@@ -187,11 +151,6 @@
           "id": "hero-code-sessions",
           "title": "Claude Sessions",
           "icon": "media/claude.svg"
-        },
-        {
-          "id": "hero-code-chat",
-          "title": "Claude Chat",
-          "icon": "media/claude.svg"
         }
       ]
     },
@@ -200,13 +159,6 @@
         {
           "id": "hero-code.sessions",
           "name": "Sessions",
-          "type": "webview"
-        }
-      ],
-      "hero-code-chat": [
-        {
-          "id": "hero-code.chat",
-          "name": "Chat",
           "type": "webview"
         }
       ]
@@ -222,11 +174,8 @@
     "release": "vsce publish"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.209",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-markdown": "^9.1.0",
-    "remark-gfm": "^4.0.1"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.0.0",
