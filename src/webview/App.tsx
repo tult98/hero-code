@@ -13,6 +13,16 @@ interface StateMessage {
   debug?: boolean
 }
 
+/** Does a row match the search box's text? Shared by the live filter and `reveal`. */
+function matchesSearch(s: SessionItem, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  return (
+    !q ||
+    (s.customName ?? s.title).toLowerCase().includes(q) ||
+    (s.activity ?? '').toLowerCase().includes(q)
+  )
+}
+
 export function App() {
   const persisted = vscode.getState()
   const [groups, setGroups] = useState<SessionGroup[]>(persisted?.groups ?? [])
@@ -35,11 +45,41 @@ export function App() {
         setGroups(event.data.groups)
         setDebug(!!event.data.debug)
         setNow(Date.now())
-        // Host-driven selection (e.g. right after starting a new session). Set
-        // it directly rather than via handleSelect — the host already opened
-        // the terminal, so no `open` message is needed.
-        if (event.data.selectId) {
-          setSelectedId(event.data.selectId)
+        // Host-driven selection (a new session, or a notification's "Open").
+        // Set it directly rather than via handleSelect — the host already
+        // opened the terminal, so no `open` message is needed.
+        //
+        // Selecting is not enough on its own: the row can sit inside a
+        // collapsed group, behind "+N more", or outside the active filter, and
+        // a highlight nobody can see is not a reveal. Clear whatever is hiding
+        // it. Both filters are transient by design, so dropping one costs the
+        // user nothing they'd expect to keep.
+        const id = event.data.selectId
+        if (id) {
+          setSelectedId(id)
+          const session = event.data.groups
+            .flatMap((g) => g.sessions)
+            .find((s) => s.id === id)
+          if (session) {
+            // A pinned row is lifted out of its folder into "Pinned".
+            const section = session.pinned
+              ? 'Pinned'
+              : event.data.groups.find((g) => g.sessions.some((s) => s.id === id))?.name
+            if (section) {
+              setCollapsed((prev) => {
+                if (!prev.has(section)) {
+                  return prev
+                }
+                const next = new Set(prev)
+                next.delete(section)
+                return next
+              })
+            }
+            // Functional updates so these read current state, not the values
+            // captured when this listener was installed.
+            setStatusFilter((prev) => (prev.size === 0 || prev.has(session.status) ? prev : new Set()))
+            setSearch((prev) => (matchesSearch(session, prev) ? prev : ''))
+          }
         }
       }
     }
@@ -103,12 +143,8 @@ export function App() {
 
   // Filter sessions by name + activity. When active, drop empty groups; groups
   // are force-opened below and Group renders matches flat (no collapse limit).
-  const q = search.trim().toLowerCase()
-  const searching = q.length > 0
-  const matchesQuery = (s: SessionItem) =>
-    !searching ||
-    (s.customName ?? s.title).toLowerCase().includes(q) ||
-    (s.activity ?? '').toLowerCase().includes(q)
+  const searching = search.trim().length > 0
+  const matchesQuery = (s: SessionItem) => matchesSearch(s, search)
 
   // Per-status counts within the search scope (the status filter itself is
   // ignored, so the chips show how many of each status are available to filter

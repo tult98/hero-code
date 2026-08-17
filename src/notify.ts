@@ -205,7 +205,9 @@ export class Notifier implements vscode.Disposable {
       (style === 'banner' || !vscode.window.state.focused)
 
     if (useBanner) {
-      nativeBanner(title, detail, cfg().get<boolean>('sound', false))
+      // `e` is undefined for a summary spanning several sessions — no single
+      // row to deep-link a click to, so the banner records no target.
+      nativeBanner(title, detail, cfg().get<boolean>('sound', false), e?.id)
       return
     }
 
@@ -246,8 +248,8 @@ function body(e: SessionEvent): string {
  * `clean` collapsing newlines is load-bearing there: it is what keeps the
  * line-per-field payload the helper reads unambiguous.
  */
-function nativeBanner(title: string, detail: string, sound: boolean): void {
-  postBanner(clean(title, MAX_TITLE), clean(detail, MAX_BODY), sound)
+function nativeBanner(title: string, detail: string, sound: boolean, sessionId?: string): void {
+  postBanner(clean(title, MAX_TITLE), clean(detail, MAX_BODY), sound, sessionId)
 }
 
 /** Collapse control characters and whitespace, then clamp. */

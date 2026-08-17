@@ -36,15 +36,21 @@ const BUNDLE_ID = 'com.tule.hero-code.notifier'
 const APP_NAME = 'Hero Code'
 
 /** Bump to force a rebuild of an already-generated helper after a script change. */
-const SCRIPT_REV = 1
+const SCRIPT_REV = 2
 
 const PROMPTED_KEY = 'heroCode.notifier.permissionPrompted'
 
+/** File the helper reads on click to learn which session the last banner was about. */
+const TARGET_FILE = 'last-banner.txt'
+
 type Host = { appPath: string; bundleId: string; iconPath: string }
 type Helper = { appPath: string; payloadDir: string }
+/** Everything `focusHost` needs compiled in to turn a click into a deep link. */
+type DeepLinkTarget = { file: string; scheme: string; extensionId: string }
 
 let storageDir: string | undefined
 let globalState: vscode.Memento | undefined
+let deepLink: { scheme: string; extensionId: string } | undefined
 let helper: Promise<Helper | undefined> | undefined
 let seq = 0
 
@@ -52,6 +58,10 @@ let seq = 0
 export function initBanners(context: vscode.ExtensionContext): void {
   storageDir = context.globalStorageUri.fsPath
   globalState = context.globalState
+  // Captured rather than hardcoded: the scheme is `vscode-insiders` on Insiders
+  // and `vscodium` on VSCodium, and a deep link on the wrong scheme silently
+  // opens nothing.
+  deepLink = { scheme: vscode.env.uriScheme, extensionId: context.extension.id }
 }
 
 /**
@@ -60,19 +70,77 @@ export function initBanners(context: vscode.ExtensionContext): void {
  * `osascript` banner, which still reaches the user — just under Script Editor's
  * name.
  */
-export function postBanner(title: string, body: string, sound: boolean): void {
+export function postBanner(title: string, body: string, sound: boolean, sessionId?: string): void {
   void (async () => {
     try {
       const h = await resolveHelper()
       if (h) {
+        await rememberTarget(sessionId)
         await post(h, title, body, sound)
         return
       }
     } catch {
       // Fall through.
     }
+    // The fallback banner is posted by Script Editor, not our helper, so a click
+    // on it never reaches `focusHost` — no target to record.
     fallbackBanner(title, body, sound)
   })()
+}
+
+/**
+ * The deep-link parameters to compile into the helper, or undefined when they
+ * can't be embedded safely.
+ *
+ * Unlike the notification text — which reaches the helper through a file
+ * precisely so it never touches the script source — these three are structural,
+ * so they *are* compiled in. That makes validating them the whole defence: the
+ * storage path is ours but ultimately derived from a home directory we don't
+ * control, and a quote or backslash in it would break out of the AppleScript
+ * string literal. Anything unexpected disables deep links rather than escaping
+ * its way in; a click then just focuses the editor, as it did before.
+ */
+function deepLinkTarget(): DeepLinkTarget | undefined {
+  if (!storageDir || !deepLink) {
+    return undefined
+  }
+  const file = path.join(storageDir, TARGET_FILE)
+  if (/["\\\n\r]/.test(file)) {
+    return undefined
+  }
+  if (!/^[A-Za-z0-9.+-]+$/.test(deepLink.scheme) || !/^[A-Za-z0-9.-]+$/.test(deepLink.extensionId)) {
+    return undefined
+  }
+  return { file, scheme: deepLink.scheme, extensionId: deepLink.extensionId }
+}
+
+/**
+ * Record which session the banner about to be posted is about, so a click on it
+ * can deep-link back to that row.
+ *
+ * "The most recent banner" is the best target available, and the limitation is
+ * inherent: `display notification` has no per-notification click callback, so
+ * the helper only ever learns that *some* banner of its own was clicked, never
+ * which. Clicking a stale banner therefore selects the newest session rather
+ * than the one on screen — the URI handler drops ids it can't find, so the worst
+ * case is landing on the wrong row, never on a resurrected dead one. A summary
+ * banner spanning several sessions clears the target and falls back to simply
+ * revealing the sidebar.
+ */
+async function rememberTarget(sessionId: string | undefined): Promise<void> {
+  if (!storageDir) {
+    return
+  }
+  // This is interpolated into the helper's `do shell script`. It is quoted there
+  // too, but a session id is a uuid and anything else has no business reaching a
+  // shell — reject rather than escape.
+  const id = sessionId && /^[A-Za-z0-9-]{1,64}$/.test(sessionId) ? sessionId : ''
+  try {
+    await writeFile(path.join(storageDir, TARGET_FILE), id, 'utf8')
+  } catch {
+    // A banner that can't record its target still posts; its click just falls
+    // back to focusing the editor.
+  }
 }
 
 async function post(h: Helper, title: string, body: string, sound: boolean): Promise<void> {
@@ -115,8 +183,18 @@ async function build(): Promise<Helper | undefined> {
 
   const appPath = path.join(storage, `${APP_NAME}.app`)
   const payloadDir = path.join(storage, 'banners')
+  const target = deepLinkTarget()
   const stampPath = path.join(storage, 'notifier.stamp')
-  const stamp = `${SCRIPT_REV}|${host.appPath}|${host.bundleId}`
+  // The deep-link parameters are compiled in, so they belong in the stamp
+  // alongside the host: change one and the built helper is out of date.
+  const stamp = [
+    SCRIPT_REV,
+    host.appPath,
+    host.bundleId,
+    target?.scheme ?? '',
+    target?.extensionId ?? '',
+    target?.file ?? '',
+  ].join('|')
 
   await mkdir(payloadDir, { recursive: true })
 
@@ -128,7 +206,7 @@ async function build(): Promise<Helper | undefined> {
 
   const source = path.join(storage, 'notifier.applescript')
   await rm(appPath, { recursive: true, force: true })
-  await writeFile(source, appleScript(host.bundleId), 'utf8')
+  await writeFile(source, appleScript(host.bundleId, target), 'utf8')
   await run('/usr/bin/osacompile', ['-o', appPath, source], { timeout: 30_000 })
 
   // The editor's own icon, so the banner is indistinguishable from one the
@@ -232,8 +310,31 @@ async function extract(key: string, plist: string): Promise<string | undefined> 
  *
  * `reopen` is what a click on a banner reaches, and `run` covers the launch when
  * the helper is not already running.
+ *
+ * `focusHost` prefers a deep link (`<scheme>://<extension id>/session/<id>`) so
+ * the click lands on the session the banner was about; that both brings the
+ * editor forward and routes into the extension's URI handler. `target` is the
+ * file `rememberTarget` writes. When it is missing, empty, or the path could not
+ * be embedded safely, it falls back to plain bundle-id focus — the behaviour
+ * before deep links existed.
  */
-function appleScript(hostBundleId: string): string {
+function appleScript(hostBundleId: string, target?: DeepLinkTarget): string {
+  const focus = target
+    ? `	set sid to ""
+	try
+		set sid to (read POSIX file "${target.file}" as «class utf8»)
+	end try
+	try
+		if sid is not "" then
+			do shell script "/usr/bin/open " & quoted form of ("${target.scheme}://${target.extensionId}/session/" & sid)
+		else
+			do shell script "/usr/bin/open -b ${hostBundleId}"
+		end if
+	end try`
+    : `	try
+		do shell script "/usr/bin/open -b ${hostBundleId}"
+	end try`
+
   return `on open theFiles
 	repeat with f in theFiles
 		try
@@ -262,9 +363,7 @@ on reopen
 end reopen
 
 on focusHost()
-	try
-		do shell script "/usr/bin/open -b ${hostBundleId}"
-	end try
+${focus}
 end focusHost
 `
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { SessionGroup } from '../types.js'
 import { Row } from './Row.js'
 
@@ -44,6 +44,17 @@ export function Group({
   const doneItems = group.sessions.filter((s) => s.done)
   const hidden = active.length - COLLAPSED_LIMIT
   const visible = showAll ? active : active.slice(0, COLLAPSED_LIMIT)
+
+  // A host-driven selection (a notification's "Open") can land on a row that
+  // "+N more" is hiding. Expand rather than leave the highlight off-list.
+  // `findIndex` is -1 when this group doesn't hold the selection, so groups
+  // that aren't involved never expand.
+  const selectionHidden = !showAll && active.findIndex((s) => s.id === selectedId) >= COLLAPSED_LIMIT
+  useEffect(() => {
+    if (selectionHidden) {
+      setShowAll(true)
+    }
+  }, [selectionHidden])
 
   const renderRow = (item: SessionGroup['sessions'][number]) => (
     <Row

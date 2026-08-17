@@ -4,7 +4,7 @@ import { SessionsViewProvider } from './view.js'
 import { SessionMonitor } from './monitor.js'
 import { TransitionDetector } from './events.js'
 import { AttentionIndicator, Notifier } from './notify.js'
-import { initTerminals, mentionInSessionTerminal, openSessionTerminal } from './terminal.js'
+import { initTerminals, mentionInSessionTerminal } from './terminal.js'
 
 /** Focuses the Claude Sessions sidebar — the way back from a native banner. */
 const REVEAL_SIDEBAR = 'workbench.view.extension.hero-code-sessions'
@@ -33,7 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
     () => provider.visible,
     (e) => {
       void vscode.commands.executeCommand(REVEAL_SIDEBAR)
-      openSessionTerminal(e.id, e.title, e.liveId)
+      provider.revealSession(e.id, e.title, e.liveId)
     },
     () => void vscode.commands.executeCommand(REVEAL_SIDEBAR),
   )
@@ -55,7 +55,37 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('hero-code.mentionInSession', () =>
       mentionInSession(provider),
     ),
+    // Where a native banner's click lands (see `focusHost` in banner.ts).
+    vscode.window.registerUriHandler({
+      handleUri: (uri) => openFromUri(provider, monitor, uri),
+    }),
   )
+}
+
+/**
+ * Handle `<scheme>://tule.hero-code/session/<id>` — a click on a native banner.
+ *
+ * The id is whichever session the *most recent* banner was about, which is the
+ * best the helper can know (see `rememberTarget`), and it may be minutes stale
+ * by the time it is clicked. So it is treated as a hint, not an instruction:
+ * resolve it against the current scan and, if that session is gone, just reveal
+ * the sidebar rather than opening a terminal for a session that no longer
+ * exists. Anything that isn't a session link is ignored.
+ */
+function openFromUri(provider: SessionsViewProvider, monitor: SessionMonitor, uri: vscode.Uri): void {
+  void vscode.commands.executeCommand(REVEAL_SIDEBAR)
+  const id = /^\/session\/([A-Za-z0-9-]{1,64})$/.exec(uri.path)?.[1]
+  if (!id) {
+    return
+  }
+  for (const group of monitor.snapshot.groups) {
+    for (const s of group.sessions) {
+      if (s.id === id || s.liveId === id) {
+        provider.revealSession(s.id, s.customName || s.title, s.liveId)
+        return
+      }
+    }
+  }
 }
 
 /**

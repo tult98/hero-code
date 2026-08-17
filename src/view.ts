@@ -46,6 +46,28 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /**
+   * Open a session from outside the webview — a notification's "Open" button —
+   * and make the sidebar highlight its row.
+   *
+   * A click that starts *in* the webview needs none of this: the React app has
+   * already moved its own selection by the time the `open` message arrives. A
+   * host-driven open has no such echo, so without this the terminal appears but
+   * the sidebar still points at whatever was selected before, and the "mention
+   * in session" keybinding keeps targeting the wrong session.
+   */
+  revealSession(id: string, title?: string, liveId?: string): void {
+    this.selected = id
+    this.selectOnce = id
+    openSessionTerminal(id, title, liveId)
+    if (this.view?.visible) {
+      this.post(this.monitor.snapshot)
+    }
+    // When the sidebar is closed or hidden there is nothing to post to yet.
+    // `selectOnce` stays pending, and the reveal the caller triggers lands it on
+    // the webview's `ready` (fresh mount) or its visibility change (existing one).
+  }
+
   /** Persist a metadata patch for one session; the monitor re-scans and re-posts. */
   private setMeta(id: string, patch: SessionMeta): void {
     this.monitor.setMeta(id, patch)
@@ -140,10 +162,16 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
 
   /** Render a snapshot. All derivation happens in the monitor; this only ships it. */
   private post(snap: MonitorSnapshot): void {
+    const view = this.view
+    if (!view) {
+      // Nothing to post to. Leave `selectOnce` pending rather than consuming it
+      // into a dropped message — the next post, once a webview exists, needs it.
+      return
+    }
     const selectId = this.selectOnce
     this.selectOnce = undefined
     const debug = vscode.workspace.getConfiguration('heroCode').get<boolean>('debugMode', false)
-    this.view?.webview.postMessage({
+    void view.webview.postMessage({
       type: 'state',
       groups: snap.groups,
       debug,

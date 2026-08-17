@@ -4,6 +4,17 @@ All notable changes to the "Hero Code" extension will be documented in this file
 
 ## [0.0.20] - 2026-08-18
 
+### Fixed
+
+- **Clicking a notification now selects the session it was about.** Previously the
+  terminal opened but the sidebar kept pointing at whatever was selected before — so
+  the row you were sent to look at wasn't highlighted, and the "Send Selection to Claude
+  Session" keybinding still targeted the old session. Native banners now click through
+  to the specific session rather than only bringing the editor forward.
+- Revealing a session no longer leaves it hidden: its folder group expands, a row behind
+  "+N more" un-hides, a search or status filter that would exclude it is cleared, and the
+  row is scrolled into view.
+
 ### Removed
 
 - **The GUI chat window is gone.** Sessions are terminal-only now. The "Claude Chat"

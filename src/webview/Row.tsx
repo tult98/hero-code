@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { SessionItem } from '../types.js'
 import { relativeTime } from '../format.js'
 import { STATUS_COLOR, STATUS_ICON, STATUS_LABEL, STATUS_TEXT } from './status.js'
@@ -32,6 +32,17 @@ export function Row({
   // the row — the native tooltip only showed in the gaps between child elements
   // that carry their own `title`, and only after the browser's ~1s delay.
   const [tip, setTip] = useState<{ x: number; y: number } | null>(null)
+
+  // Bring a newly-selected row on screen. Selection can be driven from the host
+  // (a notification's "Open"), where the row may be scrolled well out of view.
+  // `nearest` makes this a no-op when the row is already fully visible, so a
+  // plain click never jumps the list.
+  const rowRef = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    if (selected) {
+      rowRef.current?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [selected])
 
   const spin = item.status === 'working' ? ' codicon-modifier-spin' : ''
   // On the accent selection background the muted desc/fg colors lose contrast,
@@ -82,6 +93,7 @@ export function Row({
 
   return (
     <li
+      ref={rowRef}
       className={`group flex gap-2 rounded-md mb-0.5 py-2 pr-2 pl-2.5 cursor-pointer ${item.done ? 'opacity-60' : ''} ${selected ? 'bg-vs-sel-bg' : 'hover:bg-vs-hover-bg'}`}
       onMouseEnter={debug ? (e) => setTip({ x: e.clientX, y: e.clientY }) : undefined}
       onMouseLeave={debug ? () => setTip(null) : undefined}
