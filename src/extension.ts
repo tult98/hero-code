@@ -1,4 +1,5 @@
 import * as vscode from 'vscode'
+import { initBanners } from './banner.js'
 import { SessionsViewProvider } from './view.js'
 import { SessionMonitor } from './monitor.js'
 import { TransitionDetector } from './events.js'
@@ -17,6 +18,10 @@ export function activate(context: vscode.ExtensionContext) {
   // rather than spawning a duplicate. Also readies the tmux host that lets a
   // single terminal switch between sessions.
   initTerminals(context)
+
+  // Points the native-banner helper at the storage it is generated into. Must
+  // run before the first notification can fire.
+  initBanners(context)
 
   // The GUI chat engine: one shared docked chat view, driven by SDK sessions.
   // The view is created first so the manager can emit events straight into it.

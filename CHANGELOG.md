@@ -2,6 +2,32 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.19] - 2026-08-18
+
+### Fixed
+
+- **Native notifications now carry the editor's icon.** They previously appeared under
+  **Script Editor**, with its icon and a click that woke Script Editor instead of the
+  editor you were trying to get back to. Clicking a banner now brings the editor forward.
+- 0.0.18 claimed this fix but did not deliver it. Addressing the notification at the
+  editor (`tell application id "…" to display notification`) does not run inside it —
+  since macOS 10.14 Standard Additions are not injected into other processes, so the
+  command silently executed in `osascript` as before. The only way to change the icon is
+  for a real app bundle to post the notification.
+
+### Added
+
+- Banners are now posted by a small helper app, **Hero Code**, generated on first use
+  into the extension's storage. It takes its icon from whichever editor is running it, so
+  Insiders, VSCodium and forks each post as themselves.
+
+### Notes
+
+- **macOS registers the helper with notifications turned off.** The first time a banner
+  would be posted, Hero Code asks you to allow notifications for it, with a button
+  straight to the settings pane. Until that is allowed, banners will not appear — the
+  one-time cost of getting the icon and click-through right.
+
 ## [0.0.18] - 2026-08-15
 
 ### Fixed

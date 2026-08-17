@@ -1,5 +1,5 @@
 import * as vscode from 'vscode'
-import { execFile } from 'child_process'
+import { postBanner } from './banner.js'
 import type { SessionEvent, SessionEventKind } from './events.js'
 import type { MonitorSnapshot } from './monitor.js'
 import type { SessionItem } from './types.js'
@@ -42,11 +42,10 @@ function cfg(): vscode.WorkspaceConfiguration {
  * Delivers attention events as a native banner or an in-editor notification.
  *
  * The split matters: a macOS banner is what reaches you once you've tabbed away
- * to a browser, where an in-editor notification is invisible. The banner is
- * addressed to the host app (see `nativeBanner`) so it carries VS Code's icon
- * and clicking it brings VS Code forward, but it has no per-session "Open"
- * button — that exists only on the toast path, with the activity-bar badge as
- * the other way back.
+ * to a browser, where an in-editor notification is invisible. A banner carries
+ * the editor's icon and clicking it brings the editor forward (see `banner.ts`),
+ * but it has no per-session "Open" button — that exists only on the toast path,
+ * with the activity-bar badge as the other way back.
  */
 export class Notifier implements vscode.Disposable {
   private buffer: SessionEvent[] = []
@@ -242,123 +241,14 @@ function body(e: SessionEvent): string {
 }
 
 /**
- * AppleScript source is assembled from constants only; the title, body and
- * target bundle id reach it as `argv` items, which AppleScript treats as opaque
- * strings. Session titles are arbitrary user prompt text, so interpolating them
- * into the script would be both a breakage bug (any quote or backslash) and an
- * injection vector.
+ * Clamps to what Notification Center will show, then hands off to the helper
+ * app that does the posting — see `banner.ts` for why a helper is needed at all.
  *
- * The sound variant is a second constant script rather than an interpolated
- * `sound name`, for the same reason.
- *
- * The `tell application id` wrapper is what puts VS Code's icon on the banner:
- * macOS credits a notification to the process that posted it, so a bare
- * `display notification` runs in the AppleScript host's context and shows up as
- * Script Editor — with a click that wakes Script Editor rather than VS Code.
- * Addressing the host app runs the same command inside it instead.
+ * `clean` collapsing newlines is load-bearing there: it is what keeps the
+ * line-per-field payload the helper reads unambiguous.
  */
-const TARGETED = [
-  '-e',
-  'on run argv',
-  '-e',
-  'tell application id (item 3 of argv) to display notification (item 1 of argv) with title (item 2 of argv)',
-  '-e',
-  'end run',
-]
-const TARGETED_SOUND = [
-  '-e',
-  'on run argv',
-  '-e',
-  'tell application id (item 3 of argv) to display notification (item 1 of argv) with title (item 2 of argv) sound name "Ping"',
-  '-e',
-  'end run',
-]
-const UNTARGETED = [
-  '-e',
-  'on run argv',
-  '-e',
-  'display notification (item 1 of argv) with title (item 2 of argv)',
-  '-e',
-  'end run',
-]
-const UNTARGETED_SOUND = [
-  '-e',
-  'on run argv',
-  '-e',
-  'display notification (item 1 of argv) with title (item 2 of argv) sound name "Ping"',
-  '-e',
-  'end run',
-]
-
-/**
- * Bundle id of the app hosting the extension — VS Code, Insiders, VSCodium or a
- * fork — resolved once per window, or `undefined` if it cannot be determined.
- *
- * Derived from `env.appRoot` rather than `process.execPath`: the extension host
- * runs out of a nested `Code Helper (Plugin).app`, whose bundle id is not the
- * one the notification should be posted under.
- */
-let hostBundleId: Promise<string | undefined> | undefined
-
-function resolveHostBundleId(): Promise<string | undefined> {
-  hostBundleId ??= new Promise((resolve) => {
-    const at = vscode.env.appRoot.indexOf('.app/Contents/')
-    if (at < 0) {
-      resolve(undefined)
-      return
-    }
-    const plist = `${vscode.env.appRoot.slice(0, at + 4)}/Contents/Info.plist`
-    execFile(
-      '/usr/bin/plutil',
-      ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', plist],
-      { timeout: 5000 },
-      (err, stdout) => resolve(err ? undefined : stdout.trim() || undefined),
-    )
-  })
-  return hostBundleId
-}
-
-/** Set once the targeted banner has failed, so later ones skip straight to the fallback. */
-let targetedBroken = false
-
 function nativeBanner(title: string, detail: string, sound: boolean): void {
-  const body = clean(detail, MAX_BODY)
-  const head = clean(title, MAX_TITLE)
-
-  // Fire and forget throughout. A banner that fails — most often because the
-  // user has notifications turned off for the posting app — must never surface
-  // an error of its own.
-  const untargeted = () => {
-    execFile('osascript', [...(sound ? UNTARGETED_SOUND : UNTARGETED), body, head], { timeout: 5000 }, () => {})
-  }
-
-  if (targetedBroken) {
-    untargeted()
-    return
-  }
-
-  void resolveHostBundleId().then((id) => {
-    if (!id) {
-      targetedBroken = true
-      untargeted()
-      return
-    }
-    execFile(
-      'osascript',
-      [...(sound ? TARGETED_SOUND : TARGETED), body, head, id],
-      { timeout: 5000 },
-      (err) => {
-        // The host app refused the Apple event: automation consent denied
-        // (-1743), or it does not answer to that bundle id (-1728/-1708).
-        // Fall back to an untargeted banner, which still reaches the user —
-        // just under Script Editor's name.
-        if (err) {
-          targetedBroken = true
-          untargeted()
-        }
-      },
-    )
-  })
+  postBanner(clean(title, MAX_TITLE), clean(detail, MAX_BODY), sound)
 }
 
 /** Collapse control characters and whitespace, then clamp. */
