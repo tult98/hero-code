@@ -336,20 +336,24 @@ function scanFolder(
     // outright, so a session you just started was missing from the sidebar.
     // The registry records Claude's own derived name; a rough label beats no row.
     let data = cached.data ?? (info?.name ? { title: info.name } : undefined)
-    if (!data) {
-      continue
-    }
     let mtime = cached.mtime
 
     // This launch id's process moved to a new live id via `/clear`; show the
     // live conversation's title/activity on this (pinned/tracked) row, keeping
-    // the row id — and thus its terminal and pin/name metadata — stable.
+    // the row id — and thus its terminal and pin/name metadata — stable. Must
+    // run before the `!data` bailout below: right after `/clear` the launch
+    // transcript has no title of its own, so skipping this would drop the row
+    // instead of picking up the live transcript's (real, updating) title.
     if (info && info.liveId !== id) {
       const liveCached = parseCached(path.join(dir, `${info.liveId}.jsonl`))
       if (liveCached?.data) {
         data = liveCached.data
         mtime = Math.max(mtime, liveCached.mtime)
       }
+    }
+
+    if (!data) {
+      continue
     }
 
     const m = meta[id]
