@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { execFileSync } from 'child_process'
 import type { ParsedSession, RawEntry, SessionGroup, SessionItem, SessionMeta, Status } from './types.js'
+import { compareSessions } from './types.js'
 import type { ParseState } from './transcript.js'
 import { encodeProjectPath, parseSessionFrom } from './transcript.js'
 
@@ -295,6 +296,9 @@ function scanFolder(
     }
     aliasedLiveIds.add(info.liveId)
     const m = meta[launchId]
+    if (m?.hidden) {
+      continue
+    }
     synthesized.push({
       id: launchId,
       liveId: info.liveId,
@@ -307,7 +311,7 @@ function scanFolder(
       ...liveCached.data,
       customName: m?.name,
       pinned: m?.pinned,
-      done: m?.done,
+      order: m?.order,
     })
   }
 
@@ -339,7 +343,7 @@ function scanFolder(
 
     // This launch id's process moved to a new live id via `/clear`; show the
     // live conversation's title/activity on this (pinned/tracked) row, keeping
-    // the row id — and thus its terminal and pin/name/done metadata — stable.
+    // the row id — and thus its terminal and pin/name metadata — stable.
     if (info && info.liveId !== id) {
       const liveCached = parseCached(path.join(dir, `${info.liveId}.jsonl`))
       if (liveCached?.data) {
@@ -349,6 +353,9 @@ function scanFolder(
     }
 
     const m = meta[id]
+    if (m?.hidden) {
+      continue
+    }
     items.push({
       id,
       liveId: info && info.liveId !== id ? info.liveId : undefined,
@@ -363,18 +370,14 @@ function scanFolder(
       ...data,
       customName: m?.name,
       pinned: m?.pinned,
-      done: m?.done,
+      order: m?.order,
     })
   }
 
-  // Pinned first, then newest-created first — a stable order that never
-  // reorders as a session works or when its process starts/stops.
-  items.sort(
-    (a, b) =>
-      Number(!!b.pinned) - Number(!!a.pinned) ||
-      b.createdAt - a.createdAt ||
-      b.id.localeCompare(a.id),
-  )
+  // Pinned first, then manual order (if set), then newest-created first — a
+  // stable order that never reorders as a session works or its process
+  // starts/stops.
+  items.sort(compareSessions)
   return items
 }
 

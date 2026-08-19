@@ -73,6 +73,14 @@ let closeListenerRegistered = false
 /** A tmux client that dies this fast after launch means tmux itself failed. */
 const LAUNCH_FAILURE_MS = 3_000
 
+/**
+ * Session ids killed via `killSessionProcess`. `tmux kill-session` closes the
+ * attached client the same way a real launch failure would, so the close
+ * listener needs to tell "we just killed this on purpose" apart from "tmux
+ * itself is broken" before it reaches for `disableTmux()`.
+ */
+const intentionalKills = new Set<string>()
+
 /** How long a just-created session counts as live before we ask tmux about it. */
 const LAUNCH_GRACE_MS = 30_000
 
@@ -111,6 +119,9 @@ function ensureCloseListener(): void {
     const code = closed.exitStatus?.code
     const launchedAt = starting.get(id) ?? 0
     starting.delete(id)
+    if (intentionalKills.delete(id)) {
+      return
+    }
     if (code !== undefined && code !== 0 && Date.now() - launchedAt < LAUNCH_FAILURE_MS) {
       disableTmux()
       void vscode.window.showWarningMessage(
@@ -380,6 +391,23 @@ export function hasSessionTerminal(sessionId: string): boolean {
     return true
   }
   return tmuxReady() && cachedSessions().has(sessionId)
+}
+
+/**
+ * Kill the `claude` process backing `sessionId` — the tmux session hosting it,
+ * or its legacy terminal — so the RAM it holds is freed without the user
+ * having to shell out to `tmux kill-session` themselves. The transcript on
+ * disk is untouched, so the session stays resumable afterward.
+ */
+export function killSessionProcess(sessionId: string): void {
+  if (tmuxReady() && hasSession(sessionId)) {
+    intentionalKills.add(sessionId)
+    killSession(sessionId)
+    sessionCache = undefined
+    setTimeout(() => intentionalKills.delete(sessionId), LAUNCH_FAILURE_MS)
+    return
+  }
+  legacy.get(sessionId)?.dispose()
 }
 
 /**

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { SessionGroup, SessionItem, Status } from '../types.js'
+import { compareSessions } from '../types.js'
 import { vscode } from './vscode-api.js'
 import { Group } from './Group.js'
 import { StatusFilter } from './StatusFilter.js'
@@ -112,11 +113,13 @@ export function App() {
 
   const handleNewSession = (path: string) => vscode.postMessage({ type: 'newSession', path })
 
-  // Pin / rename / done are persisted host-side; the host re-posts authoritative
+  // Pin / rename are persisted host-side; the host re-posts authoritative
   // state, so these handlers only need to fire the message.
   const handlePin = (id: string, pinned: boolean) => vscode.postMessage({ type: 'pin', id, pinned })
   const handleRename = (id: string, name: string) => vscode.postMessage({ type: 'rename', id, name })
-  const handleMarkDone = (id: string, done: boolean) => vscode.postMessage({ type: 'done', id, done })
+  const handleDelete = (id: string) => vscode.postMessage({ type: 'delete', id })
+  const handleDeleteReady = (ids: string[]) => vscode.postMessage({ type: 'deleteGroup', ids })
+  const handleReorder = (ids: string[]) => vscode.postMessage({ type: 'reorder', ids })
 
   const handleToggle = (name: string, open: boolean) => {
     setCollapsed((prev) => {
@@ -181,7 +184,7 @@ export function App() {
   const pinnedSessions = filteredGroups
     .flatMap((group) => group.sessions)
     .filter((s) => s.pinned)
-    .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id))
+    .sort(compareSessions)
   // Folder groups with their pinned rows removed. While searching, also drop
   // groups left empty so results stay tight (mirrors the filter above).
   const folderGroups = filteredGroups
@@ -249,7 +252,9 @@ export function App() {
                 onSelect={handleSelect}
                 onPin={handlePin}
                 onRename={handleRename}
-                onMarkDone={handleMarkDone}
+                onDelete={handleDelete}
+                onDeleteReady={handleDeleteReady}
+                onReorder={handleReorder}
               />
             )}
             {folderGroups.map((group) => (
@@ -266,7 +271,9 @@ export function App() {
                 onSelect={handleSelect}
                 onPin={handlePin}
                 onRename={handleRename}
-                onMarkDone={handleMarkDone}
+                onDelete={handleDelete}
+                onDeleteReady={handleDeleteReady}
+                onReorder={handleReorder}
               />
             ))}
           </>

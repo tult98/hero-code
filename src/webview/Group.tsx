@@ -17,7 +17,9 @@ export function Group({
   onSelect,
   onPin,
   onRename,
-  onMarkDone,
+  onDelete,
+  onDeleteReady,
+  onReorder,
 }: {
   group: SessionGroup
   now: number
@@ -34,14 +36,18 @@ export function Group({
   onSelect: (id: string) => void
   onPin: (id: string, pinned: boolean) => void
   onRename: (id: string, name: string) => void
-  onMarkDone: (id: string, done: boolean) => void
+  onDelete: (id: string) => void
+  onDeleteReady: (ids: string[]) => void
+  /** New order (session ids) for this section's active list, after a drag. */
+  onReorder: (ids: string[]) => void
 }) {
   const [showAll, setShowAll] = useState(false)
-  const [showDone, setShowDone] = useState(false)
+  const [draggedId, setDraggedId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [dragOverPos, setDragOverPos] = useState<'before' | 'after' | null>(null)
 
-  // Done sessions are hidden from the active list and revealed on demand.
-  const active = group.sessions.filter((s) => !s.done)
-  const doneItems = group.sessions.filter((s) => s.done)
+  const active = group.sessions
+  const readyIds = active.filter((s) => s.status === 'ready' && !s.pinned).map((s) => s.id)
   const hidden = active.length - COLLAPSED_LIMIT
   const visible = showAll ? active : active.slice(0, COLLAPSED_LIMIT)
 
@@ -56,6 +62,39 @@ export function Group({
     }
   }, [selectionHidden])
 
+  const handleRowDragStart = (id: string) => setDraggedId(id)
+
+  const handleRowDragOver = (id: string, pos: 'before' | 'after') => {
+    if (id === draggedId) {
+      return
+    }
+    setDragOverId(id)
+    setDragOverPos(pos)
+  }
+
+  const handleRowDrop = () => {
+    if (draggedId && dragOverId && draggedId !== dragOverId) {
+      const from = active.findIndex((s) => s.id === draggedId)
+      const to = active.findIndex((s) => s.id === dragOverId)
+      if (from !== -1 && to !== -1) {
+        const reordered = [...active]
+        const [moved] = reordered.splice(from, 1)
+        const insertAt = reordered.findIndex((s) => s.id === dragOverId) + (dragOverPos === 'after' ? 1 : 0)
+        reordered.splice(insertAt, 0, moved)
+        onReorder(reordered.map((s) => s.id))
+      }
+    }
+    setDraggedId(null)
+    setDragOverId(null)
+    setDragOverPos(null)
+  }
+
+  const handleRowDragEnd = () => {
+    setDraggedId(null)
+    setDragOverId(null)
+    setDragOverPos(null)
+  }
+
   const renderRow = (item: SessionGroup['sessions'][number]) => (
     <Row
       key={item.id}
@@ -63,10 +102,16 @@ export function Group({
       now={now}
       selected={item.id === selectedId}
       debug={debug}
+      draggable={!searching}
+      dragOver={item.id === dragOverId ? dragOverPos : null}
       onSelect={onSelect}
       onPin={onPin}
       onRename={onRename}
-      onMarkDone={onMarkDone}
+      onDelete={onDelete}
+      onRowDragStart={handleRowDragStart}
+      onRowDragOver={handleRowDragOver}
+      onRowDrop={handleRowDrop}
+      onRowDragEnd={handleRowDragEnd}
     />
   )
 
@@ -92,12 +137,24 @@ export function Group({
                 onNewSession(group.path)
               }}
             />
+            {readyIds.length > 0 && (
+              <span
+                className='codicon codicon-trash text-sm text-vs-desc cursor-pointer rounded p-0.5 hover:text-vs-red hover:bg-vs-hover-bg'
+                title={`Delete ${readyIds.length} ready session${readyIds.length > 1 ? 's' : ''}`}
+                role='button'
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onDeleteReady(readyIds)
+                }}
+              />
+            )}
           </span>
         )}
       </summary>
       {group.sessions.length ? (
         // While searching, `group.sessions` is already the match set — show it
-        // flat, bypassing the collapse limit and the done-hiding toggle.
+        // flat, bypassing the collapse limit.
         searching ? (
           <ul className='list-none m-0 p-0'>{group.sessions.map(renderRow)}</ul>
         ) : (
@@ -111,16 +168,6 @@ export function Group({
                 {showAll ? 'Show less' : `+${hidden} more`}
               </li>
             )}
-            {doneItems.length > 0 && (
-              <li
-                className='flex items-center justify-center gap-1.5 text-xs text-vs-desc cursor-pointer rounded-md py-1.5 select-none hover:bg-vs-hover-bg'
-                onClick={() => setShowDone((v) => !v)}
-              >
-                <span className='codicon codicon-check-all text-xs' />
-                {showDone ? 'Hide done' : `${doneItems.length} done`}
-              </li>
-            )}
-            {showDone && doneItems.map(renderRow)}
           </ul>
         )
       ) : (

@@ -73,12 +73,6 @@ export class TransitionDetector {
           continue
         }
 
-        // A session the user marked done is deliberately out of mind.
-        if (s.done) {
-          this.prev.set(s.id, next)
-          continue
-        }
-
         // --- needs input -------------------------------------------------
         if (s.status === 'waiting') {
           const key = s.pendingToolId ?? 'waiting'

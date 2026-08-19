@@ -8,20 +8,34 @@ export function Row({
   now,
   selected,
   debug,
+  draggable,
+  dragOver,
   onSelect,
   onPin,
   onRename,
-  onMarkDone,
+  onDelete,
+  onRowDragStart,
+  onRowDragOver,
+  onRowDrop,
+  onRowDragEnd,
 }: {
   item: SessionItem
   now: number
   selected: boolean
   /** Show a debug tooltip with the row's id / live id / pid on hover. */
   debug: boolean
+  /** Whether this row can be dragged to reorder (false while searching). */
+  draggable: boolean
+  /** Insertion-line indicator to render on this row while another row drags over it. */
+  dragOver: 'before' | 'after' | null
   onSelect: (id: string) => void
   onPin: (id: string, pinned: boolean) => void
   onRename: (id: string, name: string) => void
-  onMarkDone: (id: string, done: boolean) => void
+  onDelete: (id: string) => void
+  onRowDragStart: (id: string) => void
+  onRowDragOver: (id: string, position: 'before' | 'after') => void
+  onRowDrop: () => void
+  onRowDragEnd: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -91,10 +105,18 @@ export function Row({
   // suppress the native child `title`s that would otherwise pop over it.
   const nativeTitle = (s: string | undefined) => (debug ? undefined : s)
 
+  const dragIndicator =
+    dragOver === 'before'
+      ? 'border-t-2 border-t-vs-sel-bg'
+      : dragOver === 'after'
+        ? 'border-b-2 border-b-vs-sel-bg'
+        : 'border-t-2 border-b-2 border-transparent'
+
   return (
     <li
       ref={rowRef}
-      className={`group flex gap-2 rounded-md mb-0.5 py-2 pr-2 pl-2.5 cursor-pointer ${item.done ? 'opacity-60' : ''} ${selected ? 'bg-vs-sel-bg' : 'hover:bg-vs-hover-bg'}`}
+      draggable={draggable}
+      className={`group flex gap-2 rounded-md mb-0.5 py-2 pr-2 pl-2.5 cursor-pointer ${dragIndicator} ${selected ? 'bg-vs-sel-bg' : 'hover:bg-vs-hover-bg'}`}
       onMouseEnter={debug ? (e) => setTip({ x: e.clientX, y: e.clientY }) : undefined}
       onMouseLeave={debug ? () => setTip(null) : undefined}
       onClick={() => {
@@ -102,6 +124,24 @@ export function Row({
           onSelect(item.id)
         }
       }}
+      onDragStart={() => onRowDragStart(item.id)}
+      onDragOver={(e) => {
+        if (!draggable) {
+          return
+        }
+        e.preventDefault()
+        const rect = e.currentTarget.getBoundingClientRect()
+        const position = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+        onRowDragOver(item.id, position)
+      }}
+      onDrop={(e) => {
+        if (!draggable) {
+          return
+        }
+        e.preventDefault()
+        onRowDrop()
+      }}
+      onDragEnd={onRowDragEnd}
     >
       <div className='w-4 shrink-0 flex justify-center items-start pt-0.5'>
         <span
@@ -128,12 +168,19 @@ export function Row({
                 <span className={`codicon codicon-pinned shrink-0 text-xs ${subColor}`} title={nativeTitle('Pinned')} aria-hidden />
               )}
               <span
-                className={`flex-1 min-w-0 truncate text-xs font-semibold ${titleColor} ${item.done ? 'line-through' : ''}`}
+                className={`flex-1 min-w-0 truncate text-xs font-semibold ${titleColor}`}
                 title={nativeTitle(displayName)}
               >
                 {displayName}
               </span>
               <div className='flex invisible group-hover:visible items-center gap-0.5 shrink-0'>
+                {draggable && (
+                  <span
+                    className={`${actionBtn} codicon codicon-gripper cursor-grab`}
+                    title='Drag to reorder'
+                    aria-hidden
+                  />
+                )}
                 <span
                   className={actionBtn}
                   title={nativeTitle(item.pinned ? 'Unpin' : 'Pin')}
@@ -175,12 +222,12 @@ export function Row({
                   </svg>
                 </span>
                 <span
-                  className={`${actionBtn} codicon codicon-check`}
-                  title={nativeTitle(item.done ? 'Restore' : 'Mark done')}
+                  className={`${actionBtn} codicon codicon-trash hover:text-vs-red`}
+                  title={nativeTitle('Delete session')}
                   role='button'
                   onClick={(e) => {
                     e.stopPropagation()
-                    onMarkDone(item.id, !item.done)
+                    onDelete(item.id)
                   }}
                 />
               </div>

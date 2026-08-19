@@ -128,16 +128,48 @@ export class SessionMonitor implements vscode.Disposable {
     if (!next.pinned) {
       delete next.pinned
     }
-    if (!next.done) {
-      delete next.done
-    }
     if (!next.name) {
       delete next.name
+    }
+    if (!next.hidden) {
+      delete next.hidden
+    }
+    if ('pinned' in patch) {
+      // A pin/unpin moves the session between sections; its old within-section
+      // rank no longer means anything there.
+      delete next.order
     }
     if (Object.keys(next).length === 0) {
       delete all[id]
     } else {
       all[id] = next
+    }
+    void this.memento.update(META_KEY, all)
+    this.refresh()
+  }
+
+  /**
+   * Persist a full manual ordering for one section (a folder group's active
+   * list, or the Pinned bucket) in a single `globalState` write: assigns
+   * `order: index` to every id in `ids`, then re-scans once.
+   */
+  setOrder(ids: string[]): void {
+    const all = { ...this.getMeta() }
+    ids.forEach((id, index) => {
+      all[id] = { ...all[id], order: index }
+    })
+    void this.memento.update(META_KEY, all)
+    this.refresh()
+  }
+
+  /**
+   * Soft-delete: hide these sessions from the sidebar in a single `globalState`
+   * write, then re-scan once. The transcript files are left untouched on disk.
+   */
+  hideSessions(ids: string[]): void {
+    const all = { ...this.getMeta() }
+    for (const id of ids) {
+      all[id] = { ...all[id], hidden: true }
     }
     void this.memento.update(META_KEY, all)
     this.refresh()
@@ -324,7 +356,7 @@ function signatureOf(groups: SessionGroup[]): string {
     parts.push(g.path)
     for (const s of g.sessions) {
       parts.push(
-        `${s.id}${s.status}${s.title}${s.activity ?? ''}${s.turnCount ?? 0}${s.pendingToolId ?? ''}${s.customName ?? ''}${s.pinned ? 1 : 0}${s.done ? 1 : 0}${s.gitBranch ?? ''}${s.liveId ?? ''}`,
+        `${s.id}${s.status}${s.title}${s.activity ?? ''}${s.turnCount ?? 0}${s.pendingToolId ?? ''}${s.customName ?? ''}${s.pinned ? 1 : 0}${s.gitBranch ?? ''}${s.liveId ?? ''}`,
       )
     }
   }

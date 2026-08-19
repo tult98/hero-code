@@ -128,7 +128,7 @@ export class Notifier implements vscode.Disposable {
     const ready: SessionEvent[] = []
     for (const e of queued) {
       const row = rows.get(e.id)
-      if (!row || row.done) {
+      if (!row) {
         continue
       }
       if (e.kind === 'waiting') {
@@ -287,9 +287,6 @@ export class AttentionIndicator implements vscode.Disposable {
     const errored: string[] = []
     for (const g of snap.groups) {
       for (const s of g.sessions) {
-        if (s.done) {
-          continue
-        }
         if (s.status === 'waiting') {
           waiting.push(s.customName || s.title)
         } else if (s.status === 'error') {

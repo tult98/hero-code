@@ -2,6 +2,18 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.21] - 2026-08-19
+
+### Fixed
+
+- **Deleting a session now removes it from the sidebar.** The trash icon previously only
+  stopped the underlying `claude` process, leaving its transcript on disk — so the row
+  reappeared on the very next scan. It now stops the process (if still running) and hides
+  the row from the sidebar; the transcript file itself is left untouched on disk.
+- **Drag-and-drop reordering works from anywhere on a row.** A drag previously only
+  started from a tiny grip icon that was invisible until the row was hovered. The whole
+  row is now the drag source.
+
 ## [0.0.20] - 2026-08-18
 
 ### Fixed

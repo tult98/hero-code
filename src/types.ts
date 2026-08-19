@@ -82,10 +82,14 @@ export interface SessionItem extends ParsedSession {
   customName?: string
   /** Lifted into the top-level Pinned section, above all folder groups. */
   pinned?: boolean
-  /** Marked done; hidden from the active list, revealed under "Done". */
-  done?: boolean
   /** Name of the workspace folder this session belongs to. Shown in the row. */
   folder?: string
+  /**
+   * Manual rank within this session's current section (a folder group or the
+   * Pinned bucket), set by dragging its row. Lower sorts earlier; absent
+   * until the user drags something in that section. See `compareSessions`.
+   */
+  order?: number
 }
 
 /**
@@ -96,7 +100,38 @@ export interface SessionItem extends ParsedSession {
 export interface SessionMeta {
   pinned?: boolean
   name?: string
-  done?: boolean
+  /** Persisted counterpart of `SessionItem.order` — see its doc comment. */
+  order?: number
+  /** Soft-deleted: excluded from `scanFolder`'s output. Transcript stays on disk. */
+  hidden?: boolean
+}
+
+/**
+ * Ordering for sessions within a single section (a folder group or the
+ * Pinned bucket). Pinned-first only matters in the folder-group sort — it's a
+ * no-op inside the Pinned bucket, where every item is already pinned. A
+ * session with an explicit `order` (set by drag-and-drop) always sorts before
+ * one without, so a freshly created/never-dragged session falls to the
+ * bottom of an arranged list instead of interleaving by `createdAt`. Ties,
+ * and "neither has an order", fall back to the original newest-first order.
+ */
+export function compareSessions(a: SessionItem, b: SessionItem): number {
+  const pinnedDiff = Number(!!b.pinned) - Number(!!a.pinned)
+  if (pinnedDiff !== 0) {
+    return pinnedDiff
+  }
+
+  const aHas = a.order !== undefined
+  const bHas = b.order !== undefined
+  if (aHas && bHas) {
+    if (a.order !== b.order) {
+      return a.order! - b.order!
+    }
+  } else if (aHas !== bHas) {
+    return aHas ? -1 : 1
+  }
+
+  return b.createdAt - a.createdAt || b.id.localeCompare(a.id)
 }
 
 /** Sessions for a single workspace folder, rendered as one group. */

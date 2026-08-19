@@ -2,7 +2,7 @@ import * as vscode from 'vscode'
 import { randomUUID } from 'crypto'
 import type { SessionMeta } from './types.js'
 import type { MonitorSnapshot, SessionMonitor } from './monitor.js'
-import { openNewSessionTerminal, openSessionTerminal } from './terminal.js'
+import { killSessionProcess, openNewSessionTerminal, openSessionTerminal } from './terminal.js'
 
 export class SessionsViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'hero-code.sessions'
@@ -73,6 +73,44 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
     this.monitor.setMeta(id, patch)
   }
 
+  /**
+   * Confirm once, then remove each session from the sidebar. Any still-running
+   * process is stopped first; the transcript file itself is left on disk.
+   */
+  private async confirmAndDelete(ids: string[]): Promise<void> {
+    const rows = this.monitor.snapshot.groups.flatMap((g) => g.sessions)
+    const targets = ids
+      .map((id) => rows.find((s) => s.id === id))
+      .filter((s): s is (typeof rows)[number] => s !== undefined)
+    if (targets.length === 0) {
+      return
+    }
+
+    const plural = targets.length > 1
+    const anyWorking = targets.some((s) => s.status === 'working')
+    const label = plural
+      ? `${targets.length} sessions`
+      : (targets[0].customName ?? targets[0].title)
+    let detail = `Removes ${label} from the sidebar. If it's still running, the process is stopped first. The conversation file itself is left on disk.`
+    if (anyWorking) {
+      detail += ' At least one is still working — it will be interrupted mid-task.'
+    }
+
+    const choice = await vscode.window.showWarningMessage(
+      plural ? `Delete ${targets.length} sessions?` : `Delete session "${label}"?`,
+      { modal: true, detail },
+      'Delete Session' + (plural ? 's' : ''),
+    )
+    if (!choice) {
+      return
+    }
+
+    for (const s of targets) {
+      killSessionProcess(s.id)
+    }
+    this.monitor.hideSessions(targets.map((s) => s.id))
+  }
+
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view
     view.webview.options = {
@@ -99,7 +137,7 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
         path?: string
         running?: boolean
         pinned?: boolean
-        done?: boolean
+        ids?: string[]
       }) => {
         if (msg.type === 'ready' || msg.type === 'refresh') {
           this.post(this.monitor.snapshot)
@@ -117,8 +155,16 @@ export class SessionsViewProvider implements vscode.WebviewViewProvider {
           this.setMeta(msg.id, { pinned: msg.pinned })
         } else if (msg.type === 'rename' && msg.id) {
           this.setMeta(msg.id, { name: msg.name })
-        } else if (msg.type === 'done' && msg.id) {
-          this.setMeta(msg.id, { done: msg.done })
+        } else if (msg.type === 'delete' && msg.id) {
+          void this.confirmAndDelete([msg.id])
+        } else if (msg.type === 'deleteGroup' && Array.isArray(msg.ids)) {
+          void this.confirmAndDelete(msg.ids)
+        } else if (
+          msg.type === 'reorder' &&
+          Array.isArray(msg.ids) &&
+          msg.ids.every((id) => typeof id === 'string')
+        ) {
+          this.monitor.setOrder(msg.ids)
         }
       },
     )
