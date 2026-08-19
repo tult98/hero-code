@@ -349,6 +349,10 @@ function scanFolder(
       if (liveCached?.data) {
         data = liveCached.data
         mtime = Math.max(mtime, liveCached.mtime)
+      } else {
+        // The new conversation has no title yet — don't keep showing the
+        // pre-`/clear` title (or the registry's possibly-stale name).
+        data = { title: 'New session' }
       }
     }
 
