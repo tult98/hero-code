@@ -2,7 +2,7 @@
   "name": "hero-code",
   "displayName": "Hero Code",
   "description": "Manage multiple Claude Code sessions at once \u2014 realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",
