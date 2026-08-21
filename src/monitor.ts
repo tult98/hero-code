@@ -1,12 +1,31 @@
 import * as vscode from 'vscode'
 import type { SessionGroup, SessionItem, SessionMeta } from './types.js'
-import { getSessionGroups } from './sessions.js'
+import type { ClearChain } from './sessions.js'
+import { getSessionGroups, NEW_SESSION_TITLE } from './sessions.js'
 import type { ClaudeStateWatcher } from './watch.js'
 import { watchClaudeState } from './watch.js'
 import { hasSessionTerminal } from './terminal.js'
 
 /** `globalState` key under which per-session user metadata is stored. */
 const META_KEY = 'hero-code.sessionMeta'
+
+/**
+ * `globalState` key for the observed `/clear` lineage (live id -> launch id).
+ * It has to be persisted rather than rebuilt each scan: once a process moves on
+ * from a session id, nothing on disk records where that id came from, so a link
+ * we don't capture while the process is alive is lost for good.
+ */
+const CHAIN_KEY = 'hero-code.clearChain'
+
+/**
+ * Ceiling on the persisted lineage. Each `/clear` adds one small entry and
+ * nothing ever removes it — a transcript can be deleted from a folder we no
+ * longer have open, so "the file is gone" isn't safe grounds for forgetting a
+ * link. Trimming the oldest insertions past this bound keeps `globalState`
+ * from growing without limit; the entries lost are years-old lineages whose
+ * transcripts have long since stopped being listed.
+ */
+const MAX_CHAIN_ENTRIES = 5000
 
 /**
  * Safety net for a "working" row whose live signal has gone stale — a latched
@@ -116,6 +135,11 @@ export class SessionMonitor implements vscode.Disposable {
   /** All persisted per-session metadata, keyed by session id. */
   getMeta(): Record<string, SessionMeta> {
     return this.memento.get<Record<string, SessionMeta>>(META_KEY, {})
+  }
+
+  /** The observed `/clear` lineage, as a fresh mutable copy the scan appends to. */
+  private getChain(): ClearChain {
+    return { ...this.memento.get<ClearChain>(CHAIN_KEY, {}) }
   }
 
   /**
@@ -294,7 +318,15 @@ export class SessionMonitor implements vscode.Disposable {
    * on the staleness guard.
    */
   private compute(): MonitorSnapshot {
-    const groups = getSessionGroups(this.getMeta())
+    // The scan records any `/clear` hop it can see into `chain`; persist it
+    // whenever that happened, so the lineage survives the process exiting and
+    // the extension host restarting.
+    const chain = this.getChain()
+    const before = Object.keys(chain).length
+    const groups = getSessionGroups(this.getMeta(), chain)
+    if (Object.keys(chain).length !== before) {
+      void this.memento.update(CHAIN_KEY, trimChain(chain))
+    }
 
     // Merge optimistic rows for "+"-started sessions whose transcript hasn't
     // been written yet, so they appear (and can be selected) immediately.
@@ -316,7 +348,7 @@ export class SessionMonitor implements vscode.Disposable {
       }
       const placeholder: SessionItem = {
         id,
-        title: 'New session',
+        title: NEW_SESSION_TITLE,
         mtime: Date.now(),
         createdAt: Date.now(),
         running: true,
@@ -344,6 +376,21 @@ export class SessionMonitor implements vscode.Disposable {
 
     return { groups, staleDowngraded, at: now }
   }
+}
+
+/** Drop the oldest links once the lineage outgrows `MAX_CHAIN_ENTRIES`. */
+function trimChain(chain: ClearChain): ClearChain {
+  const keys = Object.keys(chain)
+  if (keys.length <= MAX_CHAIN_ENTRIES) {
+    return chain
+  }
+  const trimmed: ClearChain = {}
+  // Object key order is insertion order for non-numeric keys, and session ids
+  // are uuids, so the tail is the most recently observed set of links.
+  for (const key of keys.slice(keys.length - MAX_CHAIN_ENTRIES)) {
+    trimmed[key] = chain[key]
+  }
+  return trimmed
 }
 
 /**

@@ -1,8 +1,8 @@
 {
   "name": "hero-code",
   "displayName": "Hero Code",
-  "description": "Manage multiple Claude Code sessions at once \u2014 realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
-  "version": "0.0.23",
+  "description": "Manage multiple Claude Code sessions at once — realtime status, one-click new session, pin, rename & mark done, all from a VS Code sidebar.",
+  "version": "0.0.24",
   "publisher": "tule",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -68,7 +68,7 @@
         "heroCode.notifications.onTurnFinished": {
           "type": "boolean",
           "default": true,
-          "description": "Notify when a session finishes a turn. This is the most frequent event \u2014 turn it off if it feels chatty."
+          "description": "Notify when a session finishes a turn. This is the most frequent event — turn it off if it feels chatty."
         },
         "heroCode.notifications.onError": {
           "type": "boolean",
@@ -84,7 +84,7 @@
           ],
           "enumDescriptions": [
             "A native macOS banner when the VS Code window is in the background, an in-editor notification when it is focused (default).",
-            "Always a native macOS banner. A banner clicks back into VS Code but has no per-session Open button \u2014 use the sidebar badge to find the session.",
+            "Always a native macOS banner. A banner clicks back into VS Code but has no per-session Open button — use the sidebar badge to find the session.",
             "Always an in-editor notification, which has a clickable Open button."
           ],
           "default": "auto",
@@ -98,7 +98,7 @@
             "never"
           ],
           "enumDescriptions": [
-            "Stay quiet when the Sessions sidebar is open \u2014 you can already see the status (default).",
+            "Stay quiet when the Sessions sidebar is open — you can already see the status (default).",
             "Always notify, even while you are working in VS Code.",
             "Never notify while the VS Code window is focused; only once you have switched away."
           ],

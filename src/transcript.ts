@@ -29,6 +29,31 @@ function isMeta(s: string): boolean {
   )
 }
 
+/**
+ * Recover the prompt from a slash command the user typed, e.g. `/plan APM-03`.
+ *
+ * These arrive wrapped in `<command-name>`/`<command-args>` tags, so `isMeta`
+ * discards them as scaffolding — but for a session driven entirely by commands
+ * that leaves nothing to title the row with, and Claude writes no `ai-title`
+ * for one either, so the row reads "New session" forever while doing real work.
+ *
+ * Only commands that carry arguments count. A bare `/clear`, `/model` or
+ * `/help` is control, not a prompt: `/clear` in particular opens every cleared
+ * transcript, and titling the fresh row `/clear` is exactly the stale-looking
+ * label this is all meant to avoid.
+ */
+function slashCommandPrompt(s: string): string | undefined {
+  const name = /<command-name>\s*([^<\s]+)\s*<\/command-name>/.exec(s)?.[1]
+  if (!name) {
+    return undefined
+  }
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(s)?.[1]?.trim()
+  if (!args) {
+    return undefined
+  }
+  return `${name.startsWith('/') ? name : `/${name}`} ${args}`
+}
+
 /** A short, human label for the last assistant tool use. */
 export function describeTool(name: string, input: ToolInput | undefined): string {
   const i = input ?? {}
@@ -125,11 +150,14 @@ function apply(state: ParseState, entry: RawEntry): void {
       // mention or a pasted image arrives as a block array instead. Reading
       // only strings meant those prompts never refreshed the row's preview
       // line, which is a large share of real messages.
-      const text = typeof c === 'string' ? c : userPromptText(state, c)
+      const raw = typeof c === 'string' ? c : userPromptText(state, c)
+      // A wrapped slash command is scaffolding around something the user really
+      // typed, so unwrap it rather than discarding it with the rest of the noise.
+      const text = raw && isPromptNoise(raw) ? slashCommandPrompt(raw) : raw
       // `isMeta` on the entry marks Claude's own injections (skill bodies,
       // command scaffolding) — they are shaped like user turns but nothing the
       // user typed, and they otherwise dominate the preview line.
-      if (text && !entry.isMeta && !isPromptNoise(text)) {
+      if (text && !entry.isMeta) {
         // A typed user prompt — counts as the latest activity.
         if (state.firstUser === undefined) {
           state.firstUser = text
@@ -234,17 +262,21 @@ function consume(state: ParseState, chunk: Buffer): void {
   }
 }
 
-/** The displayable view of the accumulated state, or null with no usable title. */
-function snapshot(state: ParseState): ParsedSession | null {
+/**
+ * The displayable view of the accumulated state. `title` is left undefined when
+ * the transcript has produced no usable label yet — deliberately *not* a null
+ * return, because a titleless transcript still carries everything else the row
+ * needs (git branch, pending tool, error state, turn count). Right after
+ * `/clear` that is the whole of the live transcript, and dropping it used to
+ * lose the live session's real state as well as its title.
+ */
+function snapshot(state: ParseState): ParsedSession {
   // Clean *before* the emptiness check: a prompt that opens with a newline is
   // non-empty raw but cleans to '', which used to render as a blank row label.
   const clean = (s: string) => s.split('\n')[0].trim()
   const title = clean(state.aiTitle ?? state.lastPrompt ?? state.firstUser ?? '')
-  if (!title) {
-    return null
-  }
   return {
-    title: title.slice(0, 120),
+    title: title ? title.slice(0, 120) : undefined,
     activity: state.activity ? clean(state.activity).slice(0, 120) : undefined,
     stopReason: state.stopReason,
     gitBranch: state.gitBranch,
@@ -270,14 +302,15 @@ function snapshot(state: ParseState): ParsedSession | null {
  * actively-working session costs the bytes it appended rather than a full
  * re-read of a file that routinely reaches megabytes. Pass no `prev` (or one
  * whose offset exceeds `size`, i.e. the file was truncated) to parse from the
- * start. Returns null if the file can't be read; `data` is null for sessions
- * with no usable title (empty sessions).
+ * start. Returns null if the file can't be read; `data.title` is undefined for
+ * sessions that have produced no usable label yet (empty or freshly-`/clear`ed
+ * sessions), which callers resolve themselves.
  */
 export function parseSessionFrom(
   filePath: string,
   size: number,
   prev?: ParseState,
-): { state: ParseState; data: ParsedSession | null } | null {
+): { state: ParseState; data: ParsedSession } | null {
   const state = prev && prev.offset <= size ? prev : newParseState()
   if (size > state.offset) {
     let fd: number

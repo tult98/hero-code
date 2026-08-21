@@ -8,7 +8,13 @@ export type Status = 'working' | 'waiting' | 'ready' | 'error' | 'idle'
 
 /** Fields derived purely from the transcript (no live-process knowledge). */
 export interface ParsedSession {
-  title: string
+  /**
+   * Undefined when the transcript has produced no usable label yet — a session
+   * whose first prompt hasn't flushed, or a bare `/clear` stub. Callers decide
+   * what to show (or whether to show a row at all); `SessionItem` narrows this
+   * back to a required string once that decision is made.
+   */
+  title?: string
   activity?: string
   stopReason?: string
   errored?: boolean
@@ -55,6 +61,8 @@ export interface ParsedSession {
 
 export interface SessionItem extends ParsedSession {
   id: string
+  /** Always resolved by the scan — 'New session' when the transcript has none. */
+  title: string
   mtime: number
   /**
    * Creation time (ms) of the session's launch transcript — a stable ordering

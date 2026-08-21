@@ -80,6 +80,48 @@ const LAUNCH_ID_RE = /--(?:session-id|resume)[ =]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-
 const CLAUDE_CMD_RE = /claude/i
 
 /**
+ * Persisted `/clear` lineage: live session id -> the launch id it belongs to.
+ *
+ * `/clear` closes the current transcript and starts a brand-new one under a
+ * fresh session id, and `~/.claude/sessions/<pid>.json` only ever reports the
+ * *current* one. So the link between a launch id and a live id exists for
+ * exactly as long as that process is alive and we happen to be looking — every
+ * earlier id in the chain is unrecoverable from disk afterwards, and its
+ * transcript (which may hold a whole real conversation, with a title of its
+ * own) resurfaces as a duplicate row. Recording each link as we observe it, in
+ * `globalState`, is what keeps the whole lineage collapsed onto one row.
+ */
+export type ClearChain = Record<string, string>
+
+/**
+ * Label for a session that exists but has yet to be prompted — a terminal just
+ * opened, or a conversation just `/clear`ed away. Kept in sync with the
+ * optimistic placeholder the monitor unshifts for `+`-started sessions.
+ */
+export const NEW_SESSION_TITLE = 'New session'
+
+/** Guard against a cycle in a corrupted chain — lineages are only ever a few deep. */
+const MAX_CHAIN_DEPTH = 32
+
+/**
+ * Walk a session id back to the launch id that started its lineage. Transitive
+ * on purpose: resuming a mid-chain id — which is what `openSessionTerminal`
+ * does, since only the live transcript holds the current conversation — would
+ * otherwise promote that id to a launch id of its own and split the row in two.
+ */
+export function chainRoot(chain: ClearChain, id: string): string {
+  let cur = id
+  for (let i = 0; i < MAX_CHAIN_DEPTH; i++) {
+    const next = chain[cur]
+    if (!next || next === cur) {
+      break
+    }
+    cur = next
+  }
+  return cur
+}
+
+/**
  * Live `claude` processes keyed by their **launch** id — the id the extension
  * started the terminal with, which is what our rows/terminals are tracked under.
  *
@@ -90,7 +132,7 @@ const CLAUDE_CMD_RE = /claude/i
  * the launch id parsed from the process command line. Without a launch flag
  * (external `claude`, or when `ps` is unavailable) the launch id is the live id.
  */
-function getLiveSessions(): Map<string, LiveSession> {
+function getLiveSessions(chain: ClearChain): Map<string, LiveSession> {
   const dir = path.join(os.homedir(), '.claude', 'sessions')
   const byLaunch = new Map<string, LiveSession>()
   let files: string[]
@@ -141,7 +183,17 @@ function getLiveSessions(): Map<string, LiveSession> {
     }
 
     const liveId = entry.sessionId
-    const launchId = cmd ? LAUNCH_ID_RE.exec(cmd)?.[1]?.toLowerCase() ?? liveId : liveId
+    // The flag on the command line only names the id this *process* was started
+    // with. After a `/clear` chain that id may itself be a live id already filed
+    // under an earlier launch, so walk it back to the root of its lineage.
+    const argvId = cmd ? LAUNCH_ID_RE.exec(cmd)?.[1]?.toLowerCase() ?? liveId : liveId
+    const launchId = chainRoot(chain, argvId)
+    // Record this hop while we can still see it. Every id in a chain maps
+    // straight to its root, so `chainRoot` normally resolves in one step, and
+    // the entry outlives both the process and the extension host.
+    if (liveId !== launchId) {
+      chain[liveId] = launchId
+    }
     const updatedAt = entry.statusUpdatedAt ?? entry.updatedAt ?? entry.startedAt ?? 0
     const candidate = { liveId, status: entry.status, pid: entry.pid, updatedAt, name: entry.name }
 
@@ -199,7 +251,8 @@ interface CacheEntry {
   birthtime: number
   /** Parser position, carried across refreshes so appends resume mid-file. */
   state: ParseState
-  data: ParsedSession | null
+  /** `data.title` is undefined until the transcript produces a usable label. */
+  data: ParsedSession
 }
 
 /** Cache parsed sessions by path so auto-refresh only reads what was appended. */
@@ -254,6 +307,7 @@ function scanFolder(
   folderPath: string,
   live: Map<string, LiveSession>,
   meta: Record<string, SessionMeta>,
+  chain: ClearChain,
 ): SessionItem[] {
   const dir = path.join(os.homedir(), '.claude', 'projects', encodeProjectPath(folderPath))
 
@@ -275,6 +329,30 @@ function scanFolder(
   //    here, keyed by the *launch* id. Keeping the stable launch id is what lets
   //    the view's placeholder-supersede and per-session meta reconcile correctly.
   const aliasedLiveIds = new Set<string>()
+
+  // Every transcript in this folder that the persisted lineage says belongs to
+  // an earlier launch is an aliased id — not just the *current* live id of a
+  // running process. Without this, each intermediate id in a `/clear` chain
+  // (which the registry has long since stopped mentioning) keeps rendering as
+  // its own row, carrying the title of the conversation it was cleared away
+  // from. That is the duplicate row this whole mechanism exists to prevent, and
+  // it outlives the process — the chain is read back from `globalState`.
+  for (const file of files) {
+    if (!file.endsWith('.jsonl')) {
+      continue
+    }
+    const id = file.replace(/\.jsonl$/, '')
+    const root = chainRoot(chain, id)
+    if (root === id) {
+      continue
+    }
+    // Only fold it away if the row that would absorb it actually exists here;
+    // otherwise the conversation would vanish from the sidebar entirely.
+    if (live.has(root) || fs.existsSync(path.join(dir, `${root}.jsonl`))) {
+      aliasedLiveIds.add(id)
+    }
+  }
+
   const synthesized: SessionItem[] = []
   for (const [launchId, info] of live) {
     // Every live id (from any alive process) that differs from the launch id is a
@@ -291,7 +369,7 @@ function scanFolder(
       continue
     }
     const liveCached = parseCached(path.join(dir, `${info.liveId}.jsonl`))
-    if (!liveCached?.data) {
+    if (!liveCached) {
       continue // Live transcript isn't in this folder — process belongs elsewhere.
     }
     aliasedLiveIds.add(info.liveId)
@@ -309,6 +387,9 @@ function scanFolder(
       liveUpdatedAt: info.updatedAt,
       status: deriveStatus(info, liveCached.data),
       ...liveCached.data,
+      // A just-`/clear`ed conversation has written nothing but the `/clear`
+      // itself, so it has no title of its own yet — and it is a new session.
+      title: liveCached.data.title ?? NEW_SESSION_TITLE,
       customName: m?.name,
       pinned: m?.pinned,
       order: m?.order,
@@ -331,32 +412,35 @@ function scanFolder(
     }
 
     const info = live.get(id)
-    // A live session whose transcript yields no title yet — the first prompt
-    // hasn't flushed, or it carried only attachments — used to be dropped
-    // outright, so a session you just started was missing from the sidebar.
-    // The registry records Claude's own derived name; a rough label beats no row.
-    let data = cached.data ?? (info?.name ? { title: info.name } : undefined)
+    let data = cached.data
     let mtime = cached.mtime
 
     // This launch id's process moved to a new live id via `/clear`; show the
     // live conversation's title/activity on this (pinned/tracked) row, keeping
-    // the row id — and thus its terminal and pin/name metadata — stable. Must
-    // run before the `!data` bailout below: right after `/clear` the launch
-    // transcript has no title of its own, so skipping this would drop the row
-    // instead of picking up the live transcript's (real, updating) title.
+    // the row id — and thus its terminal and pin/name metadata — stable. The
+    // launch transcript itself holds nothing after a `/clear`, so everything
+    // displayed has to come from the live one.
     if (info && info.liveId !== id) {
       const liveCached = parseCached(path.join(dir, `${info.liveId}.jsonl`))
-      if (liveCached?.data) {
+      if (liveCached) {
         data = liveCached.data
+        // Take the newer stamp even when the live transcript has no title yet,
+        // or the row's relative time freezes at the pre-`/clear` value.
         mtime = Math.max(mtime, liveCached.mtime)
-      } else {
-        // The new conversation has no title yet — don't keep showing the
-        // pre-`/clear` title (or the registry's possibly-stale name).
-        data = { title: 'New session' }
       }
     }
 
-    if (!data) {
+    // No usable title. With a live process behind it this is a real session
+    // that simply hasn't been prompted yet — freshly started, or freshly
+    // `/clear`ed — and "New session" is exactly what it is. Note we do *not*
+    // fall back to the registry's `name`: Claude leaves that at the pre-`/clear`
+    // value (no `nameSince`, no `nameSource`) until a new prompt regenerates it,
+    // which is what made a cleared row keep showing the old conversation's title.
+    //
+    // With no live process it is a dead stub — an abandoned `/clear` we never
+    // got to observe, or a session killed before its first prompt. Those must
+    // stay invisible rather than pile up as identical "New session" rows.
+    if (!data.title && !info) {
       continue
     }
 
@@ -376,6 +460,7 @@ function scanFolder(
       liveUpdatedAt: info?.updatedAt,
       status: deriveStatus(info, data),
       ...data,
+      title: data.title ?? NEW_SESSION_TITLE,
       customName: m?.name,
       pinned: m?.pinned,
       order: m?.order,
@@ -390,20 +475,22 @@ function scanFolder(
 }
 
 /** One group per open workspace folder, in workspace order. */
-export function getSessionGroups(meta: Record<string, SessionMeta>): SessionGroup[] {
+export function getSessionGroups(meta: Record<string, SessionMeta>, chain: ClearChain): SessionGroup[] {
   const folders = vscode.workspace.workspaceFolders ?? []
   if (folders.length === 0) {
     return []
   }
 
   // Resolve live processes once and reuse the map across every folder scan.
-  const live = getLiveSessions()
+  // This is also where newly-observed `/clear` hops get written into `chain`;
+  // the caller persists it.
+  const live = getLiveSessions(chain)
 
   visited = new Set()
   const groups = folders.map((folder) => ({
     name: folder.name,
     path: folder.uri.fsPath,
-    sessions: scanFolder(folder.uri.fsPath, live, meta).map((s) => ({
+    sessions: scanFolder(folder.uri.fsPath, live, meta, chain).map((s) => ({
       ...s,
       folder: folder.name,
     })),
