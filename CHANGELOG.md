@@ -2,6 +2,24 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.23] - 2026-08-20
+
+### Fixed
+
+- **A session shows "New session" right after `/clear` instead of its old title.** Once a
+  process's live id diverged from its launch id, the row kept showing the pre-`/clear`
+  title (or the process registry's name) until the new conversation produced a title of
+  its own.
+
+## [0.0.22] - 2026-08-20
+
+### Fixed
+
+- **The sidebar title now updates after `/clear`.** A session whose launch transcript had
+  no title of its own — the common case right after `/clear`, when that transcript holds
+  only the `/clear` command — was skipped before the live transcript (where the new
+  conversation actually lives) was ever read, so the row kept a stale title or vanished.
+
 ## [0.0.21] - 2026-08-19
 
 ### Fixed
