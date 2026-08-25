@@ -1,0 +1,59 @@
+name: Publish to Marketplace
+
+# Bumping the version in package.json and pushing to main (this repo's normal
+# workflow — see CLAUDE.md) is what triggers a release. The job diffs the
+# local version against what's currently live on the Marketplace and only
+# publishes when they differ, so ordinary pushes to main that don't touch the
+# version are no-ops.
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run check-types
+
+      - run: npm run lint
+
+      - name: Compare versions
+        id: version
+        run: |
+          local_version=$(node -p "require('./package.json').version")
+          publisher=$(node -p "require('./package.json').publisher")
+          name=$(node -p "require('./package.json').name")
+          published_version=$(npx vsce show "$publisher.$name" --json | node -e "
+            let d=''; process.stdin.on('data', c => d += c);
+            process.stdin.on('end', () => {
+              try { console.log(JSON.parse(d).versions[0].version) } catch { console.log('') }
+            })
+          ")
+          echo "local=$local_version" >> "$GITHUB_OUTPUT"
+          echo "published=$published_version" >> "$GITHUB_OUTPUT"
+          if [ "$local_version" != "$published_version" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.version.outputs.should_publish == 'true'
+        run: npx vsce publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Skip (already published)
+        if: steps.version.outputs.should_publish == 'false'
+        run: echo "package.json version ${{ steps.version.outputs.local }} is already live on the Marketplace — nothing to publish."

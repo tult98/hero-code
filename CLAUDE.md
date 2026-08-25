@@ -6,6 +6,11 @@ Guidance for Claude Code when working in this repository.
 
 - **Push directly to `main`. Do NOT create pull requests.** Commit changes and push
   straight to `main`; no feature branches or PRs are needed unless explicitly requested.
+- **Releasing**: bump `version` in `package.json` (and add a `CHANGELOG.md` entry) and push
+  to `main`. `.github/workflows/publish.yml` diffs that version against what's live on the
+  Marketplace and runs `vsce publish` when it changed — a push to `main` that doesn't touch
+  `package.json`'s version is a no-op for that workflow. Needs a `VSCE_PAT` repo secret
+  (Marketplace-scoped Azure DevOps PAT).
 
 ## Project
 
