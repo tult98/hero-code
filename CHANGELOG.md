@@ -2,6 +2,17 @@
 
 All notable changes to the "Hero Code" extension will be documented in this file.
 
+## [0.0.24] - 2026-08-25
+
+### Fixed
+
+- **`/clear` no longer splits a session into a new sidebar row.** Each launch-id → live-id
+  hop is now recorded in `globalState` as it is observed, and every id is resolved back to
+  the root of its lineage — so a session stays on the one row its terminal, pin and custom
+  name are tracked under, however many times it is `/clear`ed, and across window reloads.
+  Hops are merged onto a fresh read of the store before saving, so multiple VS Code windows
+  no longer overwrite each other's lineage.
+
 ## [0.0.23] - 2026-08-20
 
 ### Fixed

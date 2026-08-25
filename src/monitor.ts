@@ -325,7 +325,12 @@ export class SessionMonitor implements vscode.Disposable {
     const before = Object.keys(chain).length
     const groups = getSessionGroups(this.getMeta(), chain)
     if (Object.keys(chain).length !== before) {
-      void this.memento.update(CHAIN_KEY, trimChain(chain))
+      // Merge onto a fresh read rather than the pre-scan copy: several VS Code
+      // windows share this store, and each host only ever sees the hops of the
+      // processes in its own workspaces. Writing back a stale snapshot would
+      // drop links another window recorded meanwhile.
+      const merged = { ...this.memento.get<ClearChain>(CHAIN_KEY, {}), ...chain }
+      void this.memento.update(CHAIN_KEY, trimChain(merged))
     }
 
     // Merge optimistic rows for "+"-started sessions whose transcript hasn't
